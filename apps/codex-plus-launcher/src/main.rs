@@ -144,6 +144,9 @@ async fn activate_existing_codex_app(options: &LaunchOptions) -> anyhow::Result<
         hooks.start_helper(options.helper_port).await?;
     }
     let process_ids = codex_plus_core::watcher::find_codex_processes();
+    #[cfg(not(windows))]
+    let activated = false;
+    #[cfg(windows)]
     let mut activated = false;
     #[cfg(windows)]
     {
@@ -316,9 +319,7 @@ impl LaunchHooks for LauncherHooks {
         debug_port: u16,
         settings: &codex_plus_core::settings::BackendSettings,
     ) -> anyhow::Result<codex_plus_core::launcher::CodexLaunch> {
-        self.core
-            .launch_codex(app_dir, debug_port, settings)
-            .await
+        self.core.launch_codex(app_dir, debug_port, settings).await
     }
 
     async fn bridge_context(

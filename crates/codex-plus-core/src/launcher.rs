@@ -625,7 +625,7 @@ impl LaunchHooks for DefaultLaunchHooks {
                 .args(&command[1..])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
-            if settings.enhancements_enabled {
+            if settings.enhancements_enabled && settings.codex_app_service_tier_controls {
                 let preload_path = crate::service_tier_preload::ensure_service_tier_preload()
                     .context("failed to prepare service tier preload")?;
                 let node_options =
@@ -646,6 +646,7 @@ impl LaunchHooks for DefaultLaunchHooks {
                     "launcher.service_tier_preload_disabled",
                     serde_json::json!({
                         "enhancements_enabled": settings.enhancements_enabled,
+                        "service_tier_controls": settings.codex_app_service_tier_controls,
                     }),
                 );
             }
