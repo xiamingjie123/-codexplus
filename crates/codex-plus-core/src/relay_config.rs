@@ -1880,6 +1880,15 @@ fn complete_relay_profile_config(profile: &RelayProfile) -> anyhow::Result<Strin
 }
 
 pub fn normalize_relay_profile_for_storage(profile: &mut RelayProfile) -> anyhow::Result<()> {
+    if profile.relay_mode == crate::settings::RelayMode::Aggregate {
+        profile.model.clear();
+        profile.base_url.clear();
+        profile.upstream_base_url.clear();
+        profile.api_key.clear();
+        profile.config_contents.clear();
+        profile.auth_contents.clear();
+        return Ok(());
+    }
     if profile.relay_mode == crate::settings::RelayMode::Official && !profile.official_mix_api_key {
         let has_api_config = !profile.base_url.trim().is_empty()
             || !profile.api_key.trim().is_empty()
