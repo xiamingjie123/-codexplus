@@ -1,4 +1,237 @@
 (() => {
+  function installCodexPlusFastStartup() {
+    const config = window.__CODEX_PLUS_FAST_STARTUP__;
+    if (!config || config.enabled !== true) return;
+    if (window.__codexPlusFastStartupInstalled === "1") return;
+    window.__codexPlusFastStartupInstalled = "1";
+    const timeoutMs = Math.max(100, Math.min(Number(config.statsigTimeoutMs) || 800, 3000));
+    const statsigHosts = new Set([
+      "ab.chatgpt.com",
+      "featureassets.org",
+      "prodregistryv2.org",
+      "api.statsigcdn.com",
+      "statsigapi.net",
+      "cloudflare-dns.com",
+    ]);
+
+    const isStatsigUrl = (input) => {
+      try {
+        const url = new URL(typeof input === "string" ? input : input?.url ?? "", window.location.href);
+        return statsigHosts.has(url.hostname);
+      } catch {
+        return false;
+      }
+    };
+
+    const timeoutSignal = (signal) => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+      const clear = () => window.clearTimeout(timer);
+      if (signal) {
+        if (signal.aborted) controller.abort();
+        else signal.addEventListener("abort", () => controller.abort(), { once: true });
+      }
+      return { signal: controller.signal, clear };
+    };
+
+    const patchFetch = () => {
+      if (typeof window.fetch !== "function" || window.fetch.__codexPlusFastStartupPatched) return;
+      const originalFetch = window.fetch.bind(window);
+      const patchedFetch = (input, init = undefined) => {
+        if (!isStatsigUrl(input)) return originalFetch(input, init);
+        const { signal, clear } = timeoutSignal(init?.signal);
+        const nextInit = { ...(init || {}), signal };
+        return originalFetch(input, nextInit).finally(clear);
+      };
+      patchedFetch.__codexPlusFastStartupPatched = true;
+      window.fetch = patchedFetch;
+    };
+
+    const markStatsigReady = (client) => {
+      if (!client || typeof client !== "object" || client.__codexPlusFastStartupReadyPatched) return;
+      client.__codexPlusFastStartupReadyPatched = true;
+      const markReady = () => {
+        try {
+          if (client.loadingStatus && client.loadingStatus !== "Ready") client.loadingStatus = "Ready";
+        } catch {
+        }
+        try {
+          if (typeof client.$emt === "function") client.$emt({ name: "values_updated" });
+        } catch {
+        }
+      };
+      if (typeof client.initializeAsync === "function") {
+        const originalInitializeAsync = client.initializeAsync.bind(client);
+        client.initializeAsync = (...args) => Promise.race([
+          originalInitializeAsync(...args).catch(() => null),
+          new Promise((resolve) => window.setTimeout(() => resolve(null), timeoutMs)),
+        ]).finally(markReady);
+      }
+      markReady();
+    };
+
+    const statsigClients = () => {
+      const root = window.__STATSIG__ || globalThis.__STATSIG__;
+      if (!root || typeof root !== "object") return [];
+      const clients = [root.firstInstance, typeof root.instance === "function" ? root.instance() : null];
+      if (root.instances && typeof root.instances === "object") clients.push(...Object.values(root.instances));
+      return clients.filter((client, index, array) => client && typeof client === "object" && array.indexOf(client) === index);
+    };
+
+    const patchStatsigRoot = () => statsigClients().forEach(markStatsigReady);
+
+    patchFetch();
+    patchStatsigRoot();
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      patchFetch();
+      patchStatsigRoot();
+      if (Date.now() - startedAt > 5000) window.clearInterval(timer);
+    }, 50);
+  }
+
+  function installCodexPlusForceChineseLocale() {
+    const config = window.__CODEX_PLUS_FORCE_CHINESE_LOCALE__;
+    if (!config || config.enabled !== true) return;
+    if (window.__codexPlusForceChineseLocaleInstalled === "1") return;
+    window.__codexPlusForceChineseLocaleInstalled = "1";
+    const locale = typeof config.locale === "string" && config.locale ? config.locale : "zh-CN";
+    const languages = [locale, "zh", "en-US", "en"];
+
+    const defineNavigatorGetter = (name, value) => {
+      try {
+        Object.defineProperty(Navigator.prototype, name, {
+          configurable: true,
+          get: () => value,
+        });
+      } catch {
+        try {
+          Object.defineProperty(navigator, name, {
+            configurable: true,
+            get: () => value,
+          });
+        } catch {
+        }
+      }
+    };
+
+    defineNavigatorGetter("language", locale);
+    defineNavigatorGetter("languages", languages);
+
+    const patchI18nConfig = (dynamicConfig) => {
+      if (!dynamicConfig || typeof dynamicConfig !== "object") return dynamicConfig;
+      const value = dynamicConfig.value && typeof dynamicConfig.value === "object" ? dynamicConfig.value : {};
+      const nextValue = {
+        ...value,
+        enable_i18n: true,
+        locale_source: "SYSTEM",
+      };
+      try {
+        dynamicConfig.value = nextValue;
+      } catch {
+      }
+      if (typeof dynamicConfig.get === "function" && !dynamicConfig.__codexPlusForceChineseLocaleGetPatched) {
+        const originalGet = dynamicConfig.get.bind(dynamicConfig);
+        dynamicConfig.get = (key, fallback) => {
+          if (key === "enable_i18n") return true;
+          if (key === "locale_source") return "SYSTEM";
+          return originalGet(key, fallback);
+        };
+        dynamicConfig.__codexPlusForceChineseLocaleGetPatched = true;
+      }
+      return dynamicConfig;
+    };
+
+    const statsigClients = () => {
+      const root = window.__STATSIG__ || globalThis.__STATSIG__;
+      if (!root || typeof root !== "object") return [];
+      const clients = [root.firstInstance, typeof root.instance === "function" ? root.instance() : null];
+      if (root.instances && typeof root.instances === "object") clients.push(...Object.values(root.instances));
+      return clients.filter((client, index, array) => client && typeof client === "object" && array.indexOf(client) === index);
+    };
+
+    const patchStatsigClient = (client) => {
+      if (!client || typeof client !== "object") return;
+      if (typeof client.getDynamicConfig !== "function") return;
+      if (!client.__codexPlusForceChineseLocalePatched) {
+        const originalGetDynamicConfig = client.getDynamicConfig.bind(client);
+        client.getDynamicConfig = (name, options) => {
+          const result = originalGetDynamicConfig(name, options);
+          return name === "72216192" ? patchI18nConfig(result) : result;
+        };
+        client.__codexPlusForceChineseLocalePatched = true;
+      }
+      try {
+        patchI18nConfig(client.getDynamicConfig("72216192", { disableExposureLog: true }));
+      } catch {
+      }
+    };
+
+    const patchStatsigRoot = (root) => {
+      if (!root || typeof root !== "object" || root.__codexPlusForceChineseLocaleRootPatched) return;
+      root.__codexPlusForceChineseLocaleRootPatched = true;
+      ["firstInstance", "instance"].forEach((key) => {
+        let current;
+        try {
+          current = root[key];
+        } catch {
+          return;
+        }
+        patchStatsigClient(typeof current === "function" && key === "instance" ? current.call(root) : current);
+        try {
+          Object.defineProperty(root, key, {
+            configurable: true,
+            get: () => current,
+            set: (next) => {
+              current = next;
+              patchStatsigClient(typeof next === "function" && key === "instance" ? next.call(root) : next);
+            },
+          });
+        } catch {
+        }
+      });
+    };
+
+    const installStatsigRootSetter = () => {
+      const descriptor = Object.getOwnPropertyDescriptor(window, "__STATSIG__");
+      if (descriptor && descriptor.configurable === false) return;
+      let currentRoot = window.__STATSIG__;
+      patchStatsigRoot(currentRoot);
+      try {
+        Object.defineProperty(window, "__STATSIG__", {
+          configurable: true,
+          get: () => currentRoot,
+          set: (next) => {
+            currentRoot = next;
+            patchStatsigRoot(next);
+            statsigClients().forEach(patchStatsigClient);
+          },
+        });
+      } catch {
+      }
+    };
+
+    const patchStatsigI18nConfig = () => {
+      installStatsigRootSetter();
+      const root = window.__STATSIG__ || globalThis.__STATSIG__;
+      patchStatsigRoot(root);
+      statsigClients().forEach((client) => {
+        if (typeof client.getDynamicConfig !== "function") return;
+        patchStatsigClient(client);
+      });
+    };
+
+    patchStatsigI18nConfig();
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      patchStatsigI18nConfig();
+      if (Date.now() - startedAt > 5000) window.clearInterval(timer);
+    }, 50);
+  }
+
+  installCodexPlusFastStartup();
+  installCodexPlusForceChineseLocale();
+
   const helperBase = window.__CODEX_SESSION_DELETE_HELPER__ || "http://127.0.0.1:57321";
   const buttonClass = "codex-delete-button";
   const exportButtonClass = "codex-export-button";
@@ -10,11 +243,6 @@
   const moreMenuClass = "codex-session-more-menu";
   const actionTooltipClass = "codex-session-action-tooltip";
   const threadIdBadgeClass = "codex-thread-id-badge";
-  const timelineClass = "codex-conversation-timeline";
-  const timelineTrackClass = "codex-conversation-timeline-track";
-  const timelineMarkerClass = "codex-conversation-timeline-marker";
-  const timelineTooltipClass = "codex-conversation-timeline-tooltip";
-  const timelineTargetClass = "codex-conversation-timeline-target";
   const conversationViewMinWidth = 320;
   const conversationViewMaxAllowedWidth = 4000;
   const conversationViewDefaultWidth = 900;
@@ -29,10 +257,6 @@
   const zedRemoteOpenVersion = "1";
   const zedRemoteOpenInMenuVersion = "1";
   const zedRemoteOpenInMenuActivationWindowMs = 600;
-  const timelineQuestionLimit = 40;
-  const timelineMinTopPercent = 2;
-  const timelineMaxTopPercent = 98;
-  const timelineMaxMarkerGapPercent = 3.5;
   const projectMoveProjectionKey = "codexProjectMoveProjection";
   const legacyProjectMoveOverridesKey = "codexProjectMoveOverrides";
   const projectMoveProjectionTtlMs = 24 * 60 * 60 * 1000;
@@ -50,13 +274,53 @@
   const codexActionGroupVersion = "5";
   const codexArchiveRowActionsVersion = "1";
   const codexArchiveDeleteAllVersion = "2";
-  const codexConversationTimelineVersion = "2";
   const codexConversationViewVersion = "1";
   const codexThreadScrollVersion = "1";
   const codexThreadIdBadgeVersion = "1";
   const codexThreadServiceTierVersion = "1";
   const codexServiceTierBadgeClass = "codex-service-tier-badge";
   const codexServiceTierBadgeVersion = "3";
+  const codexMenuLocalizationVersion = "1";
+  const codexMenuLocalizationMap = new Map([
+    ["Toggle Sidebar", "切换侧边栏"],
+    ["Toggle Bottom Panel", "切换底部面板"],
+    ["Toggle Pinned Summary", "切换置顶摘要"],
+    ["Open Terminal", "打开终端"],
+    ["Toggle File Tree", "切换文件树"],
+    ["Open Browser Tab", "打开浏览器标签页"],
+    ["Focus Browser Address Bar", "聚焦浏览器地址栏"],
+    ["Reload Browser Page", "重新加载浏览器页面"],
+    ["Force Reload Browser Page", "强制重新加载浏览器页面"],
+    ["Toggle Browser Panel", "切换浏览器面板"],
+    ["Toggle Side Panel", "切换侧边面板"],
+    ["Find", "查找"],
+    ["Previous Chat", "上一个对话"],
+    ["Next Chat", "下一个对话"],
+    ["Back", "后退"],
+    ["Forward", "前进"],
+    ["Zoom In", "放大"],
+    ["Zoom Out", "缩小"],
+    ["Actual Size", "实际大小"],
+    ["Toggle Full Screen", "切换全屏"],
+    ["Keyboard Shortcuts", "键盘快捷键"],
+    ["Open command menu", "打开命令菜单"],
+    ["Search Chats…", "搜索对话…"],
+    ["Search Files…", "搜索文件…"],
+    ["New Chat", "新建对话"],
+    ["Quick Chat", "快速对话"],
+    ["Open in New Window", "在新窗口打开"],
+    ["Archive chat", "归档对话"],
+    ["Pin/unpin chat", "置顶/取消置顶对话"],
+    ["Settings…", "设置…"],
+    ["Open Folder…", "打开文件夹…"],
+    ["Close Tab", "关闭标签页"],
+    ["Close", "关闭"],
+    ["New Window", "新建窗口"],
+    ["Copy conversation path", "复制对话路径"],
+    ["Copy deeplink", "复制深层链接"],
+    ["Copy session id", "复制会话 ID"],
+    ["Copy working directory", "复制工作目录"],
+  ]);
   let codexPlusVersion = window.__CODEX_PLUS_VERSION__ || "unknown";
   const codexPlusBuild = window.__CODEX_PLUS_BUILD__ || "unknown";
   const codexPlusSettingsKey = "codexPlusSettings";
@@ -67,6 +331,9 @@
   const codexServiceTierRequestOverrideVersion = "3";
   const codexAppServerModelRequestPatchVersion = "1";
   const codexPluginMarketplaceUnlockVersion = "12";
+  const codexPluginAutoExpandVersion = "1";
+  const codexPluginAutoExpandMaxClicks = 80;
+  const codexPluginAutoExpandClickDelayMs = 90;
   const codexThreadScrollMaxEntries = 120;
   const codexThreadScrollSaveThrottleMs = 120;
   const codexThreadScrollRestoreWindowMs = 3200;
@@ -145,7 +412,6 @@
 
   scheduleCodexPlusImageOverlay();
   window.__codexThreadScrollSyncRevision = (window.__codexThreadScrollSyncRevision || 0) + 1;
-  window.__codexConversationTimelineNodeCounter = window.__codexConversationTimelineNodeCounter || 0;
   let upstreamBranchDefaultsCache = new Map();
   const upstreamBranchDefaultsCacheTtlMs = 5000;
   const upstreamRemoteBranchDefaultsCacheTtlMs = 30000;
@@ -877,97 +1143,22 @@
       .codex-plus-sponsor-card { border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 10px; background: rgba(255,255,255,.04); text-align: center; }
       .codex-plus-sponsor-card-title { color: #f3f4f6; font-size: 13px; margin-bottom: 8px; }
       .codex-plus-sponsor-qr { display: block; width: 100%; max-width: 340px; border-radius: 8px; margin: 0 auto; background: white; }
-      .${timelineClass} {
-        position: fixed;
-        top: calc(72px + 12px);
-        right: 12px;
-        bottom: calc(28px + 12px);
-        width: 24px;
-        z-index: 2147482500;
-        pointer-events: none;
-      }
-      .${timelineTrackClass} {
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 50%;
-        width: 2px;
-        transform: translateX(-50%);
-        border-radius: 999px;
-        background: rgba(209, 213, 219, .55);
-      }
-      .${timelineMarkerClass} {
-        position: absolute;
-        left: 50%;
-        width: 12px;
-        height: 12px;
-        border: 0;
-        border-radius: 999px;
-        transform: translate(-50%, -50%);
-        background: #d1d5db;
-        cursor: pointer;
-        pointer-events: auto;
-        box-shadow: 0 0 0 2px rgba(255, 255, 255, .92);
-      }
-      .${timelineMarkerClass}:hover,
-      .${timelineMarkerClass}:focus-visible,
-      .${timelineMarkerClass}.codex-conversation-timeline-marker-active {
-        background: #8b8b8b;
-        outline: none;
-      }
-      .${timelineTooltipClass} {
-        position: absolute;
-        right: 20px;
-        top: 50%;
-        display: block;
-        box-sizing: border-box;
-        width: max-content;
-        max-width: min(320px, calc(100vw - 72px));
-        transform: translateY(-50%);
-        border-radius: 8px;
-        background: rgba(80, 80, 80, .92);
-        color: #ffffff;
-        font: 600 13px system-ui, sans-serif;
-        line-height: 18px;
-        padding: 10px 12px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
-        opacity: 0;
-        visibility: hidden;
-        pointer-events: none;
-      }
-      .${timelineMarkerClass}:hover .${timelineTooltipClass},
-      .${timelineMarkerClass}:focus-visible .${timelineTooltipClass} {
-        opacity: 1;
-        visibility: visible;
-        z-index: 2147482501;
-      }
-      .${timelineTargetClass} {
-        animation: codex-conversation-timeline-pulse 1.2s ease-out;
-      }
-      @keyframes codex-conversation-timeline-pulse {
-        0% { box-shadow: 0 0 0 0 rgba(16, 163, 127, .35); }
-        100% { box-shadow: 0 0 0 14px rgba(16, 163, 127, 0); }
-      }
     `;
     document.documentElement.appendChild(style);
   }
 
   function defaultCodexPlusSettings() {
-    return { pluginEntryUnlock: true, pluginMarketplaceUnlock: true, forcePluginInstall: true, modelWhitelistUnlock: true, sessionDelete: true, markdownExport: true, pasteFix: false, projectMove: true, conversationTimeline: true, threadIdBadge: false, conversationView: false, conversationViewMaxWidth: conversationViewDefaultWidth, threadScrollRestore: true, zedRemoteOpen: true, upstreamWorktreeCreate: true, nativeMenuPlacement: true, serviceTierControls: true };
+    return { pluginMarketplaceUnlock: true, forcePluginInstall: true, pluginAutoExpand: true, modelWhitelistUnlock: true, sessionDelete: true, markdownExport: true, pasteFix: false, projectMove: true, threadIdBadge: false, conversationView: false, conversationViewMaxWidth: conversationViewDefaultWidth, threadScrollRestore: true, zedRemoteOpen: true, upstreamWorktreeCreate: true, nativeMenuPlacement: true, serviceTierControls: true };
   }
 
   const codexPlusBackendSettingMap = {
-    pluginEntryUnlock: "codexAppPluginEntryUnlock",
     pluginMarketplaceUnlock: "codexAppPluginMarketplaceUnlock",
     forcePluginInstall: "codexAppForcePluginInstall",
+    pluginAutoExpand: "codexAppPluginAutoExpand",
     modelWhitelistUnlock: "codexAppModelWhitelistUnlock",
     sessionDelete: "codexAppSessionDelete",
     markdownExport: "codexAppMarkdownExport",
     projectMove: "codexAppProjectMove",
-    conversationTimeline: "codexAppConversationTimeline",
     threadIdBadge: "codexAppThreadIdBadge",
     conversationView: "codexAppConversationView",
     threadScrollRestore: "codexAppThreadScrollRestore",
@@ -992,15 +1183,14 @@
     const relayPatchDisabled = codexPlusBackendSettings.launchMode === "relay";
     if (codexPlusBackendSettings.enhancementsEnabled === false) {
       return {
-        pluginEntryUnlock: false,
         pluginMarketplaceUnlock: false,
         forcePluginInstall: false,
+        pluginAutoExpand: false,
         modelWhitelistUnlock: false,
         sessionDelete: false,
         markdownExport: false,
         pasteFix: false,
         projectMove: false,
-        conversationTimeline: false,
         threadIdBadge: false,
         conversationView: false,
         conversationViewMaxWidth: conversationViewDefaultWidth,
@@ -1014,20 +1204,16 @@
     try {
       const settings = { ...defaultCodexPlusSettings(), ...JSON.parse(localStorage.getItem(codexPlusSettingsKey) || "{}"), ...backendCodexPlusSettings() };
       if (relayPatchDisabled) {
-        settings.pluginEntryUnlock = false;
         settings.pluginMarketplaceUnlock = false;
         settings.forcePluginInstall = false;
       }
-      settings.serviceTierControls = true;
       return settings;
     } catch {
       const settings = { ...defaultCodexPlusSettings(), ...backendCodexPlusSettings() };
       if (relayPatchDisabled) {
-        settings.pluginEntryUnlock = false;
         settings.pluginMarketplaceUnlock = false;
         settings.forcePluginInstall = false;
       }
-      settings.serviceTierControls = true;
       return settings;
     }
   }
@@ -1064,6 +1250,12 @@
         removeCodexServiceTierBadges();
         refreshCodexServiceTierControls();
       }
+    }
+    if (key === "pluginAutoExpand" && !value) {
+      clearTimeout(window.__codexPluginAutoExpandTimer);
+      window.__codexPluginAutoExpandTimer = null;
+      window.__codexPluginAutoExpandRunning = false;
+      window.__codexPluginAutoExpandLastSignature = "";
     }
     renderCodexPlusMenu();
     scan();
@@ -2185,16 +2377,12 @@
               </div>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">页面功能增强</div><div class="codex-plus-row-description">关闭后停用删除、导出、移动、Timeline、插件相关和菜单位置增强。</div></div>
+              <div><div class="codex-plus-row-title">Codex增强</div><div class="codex-plus-row-description">关闭后停用删除、导出、移动、插件相关和菜单位置增强。</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-backend-setting="enhancementsEnabled"><span></span></button>
             </div>
             <div class="codex-plus-row">
               <div><div class="codex-plus-row-title">插件市场解锁</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强模式下无需开启；ChatGPT 登录态会保留官方插件市场。" : "API Key 模式下扩展插件市场请求，尽量显示完整插件列表。"}</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="pluginMarketplaceUnlock" ${codexPlusBackendSettings.launchMode === "relay" ? 'disabled data-relay-unneeded="true"' : ""}><span></span></button>
-            </div>
-            <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">强制解锁入口</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强模式下无需开启；官方登录态会保留插件入口。" : "恢复 1.1.9 的入口解锁方式，强制显示并启用插件入口。"}</div></div>
-              <button type="button" class="codex-plus-toggle" data-codex-plus-setting="pluginEntryUnlock" ${codexPlusBackendSettings.launchMode === "relay" ? 'disabled data-relay-unneeded="true"' : ""}><span></span></button>
             </div>
             <div class="codex-plus-row">
               <div><div class="codex-plus-row-title">特殊插件强制安装</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强模式下无需开启；不会改插件安装入口。" : "解除 App unavailable / 应用不可用导致的前端安装禁用。"}</div></div>
@@ -2243,10 +2431,6 @@
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="projectMove"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">对话 Timeline</div><div class="codex-plus-row-description">在对话右侧显示用户提问时间线，悬停查看摘要，点击跳转。</div></div>
-              <button type="button" class="codex-plus-toggle" data-codex-plus-setting="conversationTimeline"><span></span></button>
-            </div>
-            <div class="codex-plus-row">
               <div><div class="codex-plus-row-title">会话 ID 标识</div><div class="codex-plus-row-description">在侧边栏会话标题前显示短 ID 和 UUIDv7 创建时间，方便定位历史会话。</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="threadIdBadge"><span></span></button>
             </div>
@@ -2277,7 +2461,7 @@
               <button type="button" class="codex-plus-toggle" data-codex-backend-setting="providerSyncEnabled"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">页面增强模式</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强：保留会话删除、导出、项目移动、Timeline 和用户脚本，仅关闭插件入口相关增强。" : "完整增强：加载插件入口、强制安装、项目路径移动等全部页面能力。"}</div></div>
+              <div><div class="codex-plus-row-title">页面增强模式</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强：保留会话删除、导出、项目移动和用户脚本，仅关闭插件市场相关增强。" : "完整增强：加载插件市场、强制安装、项目路径移动等全部页面能力。"}</div></div>
               <button type="button" class="codex-plus-action-button" data-codex-open-manager="true">打开管理工具</button>
             </div>
             <div class="codex-plus-row">
@@ -2671,9 +2855,14 @@
     }
     const next = { ...params };
     const hadMarketplaceKinds = Object.prototype.hasOwnProperty.call(next, "marketplaceKinds");
-    if (hadMarketplaceKinds) delete next.marketplaceKinds;
+    const nextKinds = Array.isArray(next.marketplaceKinds)
+      ? next.marketplaceKinds.map((kind) => restorePluginMarketplaceName(kind))
+      : ["local"];
+    if (!nextKinds.includes("vertical")) nextKinds.push("vertical");
+    next.marketplaceKinds = Array.from(new Set(nextKinds));
     sendCodexPlusDiagnostic("plugin_marketplace_request_expanded", {
       hadMarketplaceKinds,
+      marketplaceKinds: next.marketplaceKinds,
       cwdCount: Array.isArray(next.cwds) ? next.cwds.length : 0,
     });
     return next;
@@ -2683,6 +2872,8 @@
     if (name === "openai-bundled") return "OpenAI插件1(Codex++)";
     if (name === "openai-curated") return "OpenAI插件2(Codex++)";
     if (name === "openai-primary-runtime") return "OpenAI插件3(Codex++)";
+    if (name === "openai-api-curated") return "OpenAI插件4(Codex++)";
+    if (name === "openai-curated-remote") return "OpenAI插件5(Codex++)";
     return fallback;
   }
 
@@ -2796,12 +2987,14 @@
     if (name === "codex-plus-openai-bundled") return "openai-bundled";
     if (name === "codex-plus-openai-curated") return "openai-curated";
     if (name === "codex-plus-openai-primary-runtime") return "openai-primary-runtime";
+    if (name === "codex-plus-openai-api-curated") return "openai-api-curated";
+    if (name === "codex-plus-openai-curated-remote") return "openai-curated-remote";
     return name;
   }
 
   function codexPluginOfficialMarketplaceName(name) {
     const restored = restorePluginMarketplaceName(name);
-    return restored === "openai-bundled" || restored === "openai-curated" || restored === "openai-primary-runtime";
+    return restored === "openai-bundled" || restored === "openai-curated" || restored === "openai-primary-runtime" || restored === "openai-api-curated" || restored === "openai-curated-remote";
   }
 
   function isCodexPluginBuildFlavorFilter(callback, sample) {
@@ -2924,6 +3117,101 @@
       });
     }
     return result;
+  }
+
+  function pluginAutoExpandVisibleElement(el) {
+    if (!(el instanceof HTMLElement) || !el.isConnected) return false;
+    const style = getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function pluginAutoExpandPageLooksRelevant() {
+    const text = String(document.body?.innerText || "");
+    return /插件|Plugins?|Marketplace|市场/i.test(text) && !!document.querySelector('button, [role="button"]');
+  }
+
+  function pluginAutoExpandButtonLooksScoped(button) {
+    let node = button;
+    for (let depth = 0; node instanceof HTMLElement && node !== document.body && depth < 8; depth += 1, node = node.parentElement) {
+      const text = String(node.innerText || "");
+      if (text.length > 16000) continue;
+      if (/插件|Plugins?|Marketplace|市场/i.test(text)) return true;
+    }
+    return false;
+  }
+
+  function pluginAutoExpandButtonText(button) {
+    return String(button?.textContent || button?.getAttribute?.("aria-label") || button?.getAttribute?.("title") || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function pluginAutoExpandButtonLooksLikeMore(button) {
+    const text = pluginAutoExpandButtonText(button);
+    if (!text || text.length > 120) return false;
+    if (/^(更多|显示更多|查看更多|加载更多|Show more|Load more|More)$/i.test(text)) return true;
+    if (/^查看\s+.+以及另外\s*\d+\s*个$/i.test(text)) return true;
+    if (/^View\s+.+\s+and\s+\d+\s+more$/i.test(text)) return true;
+    if (/^Show\s+.+\s+and\s+\d+\s+more$/i.test(text)) return true;
+    return false;
+  }
+
+  function pluginAutoExpandButtonCandidates() {
+    if (!codexPlusSettings().pluginAutoExpand || !pluginAutoExpandPageLooksRelevant()) return [];
+    return Array.from(document.querySelectorAll('button, [role="button"]'))
+      .filter(pluginAutoExpandVisibleElement)
+      .filter((button) => !button.disabled && button.getAttribute("aria-disabled") !== "true")
+      .filter(pluginAutoExpandButtonLooksLikeMore)
+      .filter(pluginAutoExpandButtonLooksScoped)
+      .filter((button) => !button.closest?.(`.${moreMenuClass}, #${codexPlusMenuId}, .codex-plus-modal-overlay`));
+  }
+
+  function pluginAutoExpandSignature() {
+    return pluginAutoExpandButtonCandidates()
+      .map((button) => {
+        const rect = button.getBoundingClientRect();
+        return `${pluginAutoExpandButtonText(button)}:${Math.round(rect.top)}:${Math.round(rect.left)}`;
+      })
+      .join("|");
+  }
+
+  function schedulePluginAutoExpand(force = false) {
+    if (!codexPlusSettings().pluginAutoExpand) return;
+    if (window.__codexPluginAutoExpandRunning && !force) return;
+    clearTimeout(window.__codexPluginAutoExpandTimer);
+    window.__codexPluginAutoExpandTimer = setTimeout(() => runPluginAutoExpand(force), force ? 30 : 180);
+  }
+
+  function runPluginAutoExpand(force = false) {
+    if (!codexPlusSettings().pluginAutoExpand) return;
+    const currentSignature = pluginAutoExpandSignature();
+    if (!force && currentSignature && currentSignature === window.__codexPluginAutoExpandLastSignature) return;
+    window.__codexPluginAutoExpandLastSignature = currentSignature;
+    window.__codexPluginAutoExpandRunning = true;
+    window.__codexPluginAutoExpandClicks = 0;
+    const clickNext = () => {
+      if (!codexPlusSettings().pluginAutoExpand) {
+        window.__codexPluginAutoExpandRunning = false;
+        return;
+      }
+      const button = pluginAutoExpandButtonCandidates()[0];
+      if (!button || window.__codexPluginAutoExpandClicks >= codexPluginAutoExpandMaxClicks) {
+        window.__codexPluginAutoExpandRunning = false;
+        sendCodexPlusDiagnostic("plugin_auto_expand_finished", {
+          version: codexPluginAutoExpandVersion,
+          clicks: window.__codexPluginAutoExpandClicks || 0,
+          exhausted: !!button,
+        });
+        return;
+      }
+      window.__codexPluginAutoExpandClicks = (window.__codexPluginAutoExpandClicks || 0) + 1;
+      button.dataset.codexPluginAutoExpandClicked = String(Date.now());
+      button.click();
+      setTimeout(clickNext, codexPluginAutoExpandClickDelayMs);
+    };
+    clickNext();
   }
 
   function patchPluginMarketplaceRequestClient(client) {
@@ -3206,79 +3494,6 @@
     void patch();
   }
 
-  function reactFiberFrom(element) {
-    const fiberKey = Object.keys(element).find((key) => key.startsWith("__reactFiber"));
-    return fiberKey ? element[fiberKey] : null;
-  }
-
-  function authContextValueFrom(element) {
-    for (let fiber = reactFiberFrom(element); fiber; fiber = fiber.return) {
-      for (const value of [fiber.memoizedProps?.value, fiber.pendingProps?.value]) {
-        if (value && typeof value === "object" && typeof value.setAuthMethod === "function" && "authMethod" in value) {
-          return value;
-        }
-      }
-    }
-    return null;
-  }
-
-  function spoofChatGPTAuthMethod(element) {
-    const auth = authContextValueFrom(element);
-    if (!auth || auth.authMethod === "chatgpt") return false;
-    auth.setAuthMethod("chatgpt");
-    return true;
-  }
-
-  function pluginEntryButton() {
-    const byIcon = document.querySelector(`${selectors.pluginNavButton} ${selectors.pluginSvgPath}`)?.closest("button");
-    if (byIcon) return byIcon;
-    return Array.from(document.querySelectorAll(selectors.pluginNavButton))
-      .find((button) => /^(插件|Plugins)(\s+-\s+.*)?$/i.test((button.textContent || "").trim())) || null;
-  }
-
-  function labelUnlockedPluginEntry(button) {
-    const labelTextNode = Array.from(button.querySelectorAll("span, div")).reverse()
-      .flatMap((node) => Array.from(node.childNodes))
-      .find((node) => node.nodeType === 3 && /^(插件|Plugins)( - 已解锁| - Unlocked)?$/i.test((node.nodeValue || "").trim()));
-    if (!labelTextNode) return;
-    const current = (labelTextNode.nodeValue || "").trim();
-    labelTextNode.nodeValue = /^Plugins/i.test(current) ? "Plugins - Unlocked" : "插件 - 已解锁";
-  }
-
-  function clearPluginEntryUnlockLabel(button) {
-    const labelTextNode = Array.from(button.querySelectorAll("span, div")).reverse()
-      .flatMap((node) => Array.from(node.childNodes))
-      .find((node) => node.nodeType === 3 && /^(插件 - 已解锁|Plugins - Unlocked)$/i.test((node.nodeValue || "").trim()));
-    if (!labelTextNode) return;
-    labelTextNode.nodeValue = /^Plugins/i.test((labelTextNode.nodeValue || "").trim()) ? "Plugins" : "插件";
-  }
-
-  function enablePluginEntry() {
-    if (pluginPatchDisabledInRelayMode()) return;
-    if (!codexPlusSettings().pluginEntryUnlock) return;
-    const pluginButton = pluginEntryButton();
-    if (!pluginButton) return;
-    const spoofed = spoofChatGPTAuthMethod(pluginButton);
-    pluginButton.disabled = false;
-    pluginButton.removeAttribute("disabled");
-    pluginButton.style.display = "";
-    pluginButton.querySelectorAll("*").forEach((node) => {
-      node.style.display = "";
-    });
-    labelUnlockedPluginEntry(pluginButton);
-    const reactPropsKey = Object.keys(pluginButton).find((key) => key.startsWith("__reactProps"));
-    if (reactPropsKey) {
-      pluginButton[reactPropsKey].disabled = false;
-    }
-    if (pluginButton.dataset.codexPluginEnabled !== "true") {
-      pluginButton.dataset.codexPluginEnabled = "true";
-      pluginButton.addEventListener("click", () => {
-        spoofChatGPTAuthMethod(pluginButton);
-      }, true);
-    }
-    sendCodexPlusDiagnostic("plugin_entry_unlock_applied", { spoofed });
-  }
-
   function pluginPatchDisabledInRelayMode() {
     return !codexPlusBackendSettingsLoaded || codexPlusBackendSettings.launchMode === "relay";
   }
@@ -3376,11 +3591,6 @@
   }
 
   function clearPluginPatchArtifacts() {
-    const pluginButton = pluginEntryButton();
-    if (pluginButton) {
-      delete pluginButton.dataset.codexPluginEnabled;
-      clearPluginEntryUnlockLabel(pluginButton);
-    }
     pluginInstallCandidates().forEach(clearForcedInstallButtonLabel);
   }
 
@@ -3708,11 +3918,11 @@
   function currentThreadScroller() {
     const explicit = document.querySelector(".thread-scroll-container");
     if (explicit?.isConnected) return explicit;
-    const root = conversationTimelineRoot();
+    const root = conversationRoot();
     if (!root?.isConnected) return document.scrollingElement || document.documentElement;
     const style = getComputedStyle(root);
     if (/(auto|scroll)/.test(style.overflowY) && root.scrollHeight > root.clientHeight) return root;
-    return nearestTimelineScroller(root);
+    return nearestScrollableAncestor(root);
   }
 
   function threadScrollRuntime() {
@@ -3881,7 +4091,7 @@
     if (threadScrollIsReversed(activeScroller) && shouldBlockThreadScrollAutobottom(activeScroller, 0)) return true;
     const elementRect = element.getBoundingClientRect?.();
     if (!elementRect) return false;
-    const elementBottomTop = activeScroller.scrollTop + elementRect.bottom - timelineScrollerViewportTop(activeScroller) - activeScroller.clientHeight;
+    const elementBottomTop = activeScroller.scrollTop + elementRect.bottom - scrollerViewportTop(activeScroller) - activeScroller.clientHeight;
     return shouldBlockThreadScrollAutobottom(activeScroller, elementBottomTop);
   }
 
@@ -6022,6 +6232,88 @@
     return (node?.innerText || node?.textContent || "").replace(/\s+/g, " ").trim();
   }
 
+  function codexMenuLocalizationScopeSelector() {
+    return [
+      "[role='menu']",
+      "[role='dialog']",
+      "[role='listbox']",
+      "[cmdk-list]",
+      "[data-radix-menu-content]",
+      "[data-radix-popper-content-wrapper]",
+      "[data-testid='app-shell-header-context-menu-surface']",
+      "[data-codex-keyboard-shortcuts]",
+      "[class*='command']",
+      "[class*='Command']",
+      "[class*='shortcut']",
+      "[class*='Shortcut']",
+    ].join(", ");
+  }
+
+  function codexMenuLocalizationRoot() {
+    return document.body || document.documentElement;
+  }
+
+  function shouldLocalizeCodexMenuNode(node) {
+    if (!node || node.nodeType !== Node.TEXT_NODE || !node.nodeValue) return false;
+    const parent = node.parentElement;
+    if (!parent || isExtensionUiNode(parent)) return false;
+    if (parent.closest?.("textarea, input, [contenteditable='true'], [data-message-author-role], [data-testid='conversation-turn'], main .prose")) return false;
+    return !!parent.closest?.(codexMenuLocalizationScopeSelector());
+  }
+
+  function localizeCodexMenuTextNode(node) {
+    if (!shouldLocalizeCodexMenuNode(node)) return false;
+    const original = node.nodeValue;
+    const leading = original.match(/^\s*/)?.[0] || "";
+    const trailing = original.match(/\s*$/)?.[0] || "";
+    const normalized = original.replace(/\s+/g, " ").trim();
+    const localized = codexMenuLocalizationMap.get(normalized);
+    if (!localized) return false;
+    const next = `${leading}${localized}${trailing}`;
+    if (next === original) return false;
+    node.nodeValue = next;
+    return true;
+  }
+
+  function localizeCodexMenuAttributes(root) {
+    if (!root?.querySelectorAll) return false;
+    let changed = false;
+    const selector = "button[aria-label], [role='menuitem'][aria-label], [title], [placeholder]";
+    root.querySelectorAll(selector).forEach((element) => {
+      if (isExtensionUiNode(element)) return;
+      if (element.closest?.("textarea, input, [contenteditable='true'], [data-message-author-role], [data-testid='conversation-turn'], main .prose")) return;
+      if (!element.closest?.(codexMenuLocalizationScopeSelector())) return;
+      for (const attribute of ["aria-label", "title", "placeholder"]) {
+        const value = element.getAttribute(attribute);
+        const localized = codexMenuLocalizationMap.get((value || "").replace(/\s+/g, " ").trim());
+        if (localized && localized !== value) {
+          element.setAttribute(attribute, localized);
+          changed = true;
+        }
+      }
+    });
+    return changed;
+  }
+
+  function localizeCodexMenus(root = codexMenuLocalizationRoot()) {
+    if (!root) return false;
+    let changed = false;
+    const scopes = [];
+    if (root.nodeType === 1 && root.matches?.(codexMenuLocalizationScopeSelector())) scopes.push(root);
+    root.querySelectorAll?.(codexMenuLocalizationScopeSelector()).forEach((scope) => scopes.push(scope));
+    for (const scope of scopes.slice(0, 80)) {
+      if (!(scope instanceof HTMLElement) || isExtensionUiNode(scope)) continue;
+      const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (localizeCodexMenuTextNode(node)) changed = true;
+      }
+      if (localizeCodexMenuAttributes(scope)) changed = true;
+      scope.dataset.codexMenuLocalizationVersion = codexMenuLocalizationVersion;
+    }
+    return changed;
+  }
+
   async function loadUpstreamBranchDefaults(context) {
     const repoPath = typeof context === "string" ? context : context?.repoPath || "";
     const projectId = typeof context === "string" ? "" : context?.projectId || "";
@@ -7284,25 +7576,8 @@
     }
   }
 
-  function truncateTimelineQuestion(text) {
-    const normalized = String(text || "").replace(/\s+/g, " ").trim();
-    const chars = Array.from(normalized);
-    if (chars.length <= timelineQuestionLimit) return normalized;
-    return `${chars.slice(0, timelineQuestionLimit).join("")}…`;
-  }
-
-  function conversationTimelineRoot() {
+  function conversationRoot() {
     return document.querySelector(".thread-scroll-container") || document.querySelector("main") || document.querySelector('[role="main"]');
-  }
-
-  function timelineQuestionSelector() {
-    return [
-      '[data-message-author-role="user"]',
-      '[data-testid="conversation-turn"][data-message-author-role="user"]',
-      '[data-testid="conversation-turn"] [data-message-author-role="user"]',
-      '[class*="user-message"]',
-      '[class*="UserMessage"]',
-    ].join(", ");
   }
 
   function nodeOrAncestorLooksLikeCodexUserBubble(node) {
@@ -7318,195 +7593,17 @@
     return !!node.querySelector?.(".group.flex.w-full.flex-col.items-end.justify-end.gap-1 > [class*='bg-token-foreground/5']");
   }
 
-  function nodeLooksLikeTimelineQuestion(node) {
-    if (node.nodeType !== 1 || isExtensionUiNode(node)) return false;
-    const questionSelector = timelineQuestionSelector();
-    return !!node.matches?.(questionSelector) || !!node.closest?.(questionSelector) || !!node.querySelector?.(questionSelector) || nodeLooksLikeCodexUserBubble(node);
-  }
-
-  function conversationTimelineQuestionCandidates(root) {
-    const explicitCandidates = Array.from(root.querySelectorAll([
-      '[data-message-author-role="user"]',
-      '[data-testid="conversation-turn"][data-message-author-role="user"]',
-      '[data-testid="conversation-turn"] [data-message-author-role="user"]',
-      '[class*="user-message"]',
-      '[class*="UserMessage"]',
-    ].join(", ")));
-    const codexUserBubbles = Array.from(root.querySelectorAll(".group.flex.w-full.flex-col.items-end.justify-end.gap-1")).flatMap((group) => {
-      return Array.from(group.children).filter((child) => String(child.className || "").includes("bg-token-foreground/5"));
-    });
-    return [...explicitCandidates, ...codexUserBubbles];
-  }
-
-  function extractTimelineQuestionText(node) {
-    const clone = node.cloneNode(true);
-    clone.querySelectorAll("button, svg, [aria-hidden='true'], .sr-only").forEach((child) => child.remove());
-    return clone.textContent.replace(/\s+/g, " ").trim();
-  }
-
-  function timelineNodeId(node) {
-    if (!node.__codexConversationTimelineNodeId) {
-      window.__codexConversationTimelineNodeCounter += 1;
-      node.__codexConversationTimelineNodeId = String(window.__codexConversationTimelineNodeCounter);
-    }
-    return node.__codexConversationTimelineNodeId;
-  }
-
-  function visibleTimelineNode(node) {
-    if (!node.isConnected) return false;
-    const style = getComputedStyle(node);
-    if (style.display === "none" || style.visibility === "hidden") return false;
-    const rect = node.getBoundingClientRect();
-    return rect.width > 0 || rect.height > 0 || !!node.textContent?.trim();
-  }
-
-  function conversationTimelineQuestions() {
-    const root = conversationTimelineRoot();
-    if (!root?.matches?.('.thread-scroll-container, main, [role="main"]')) return [];
-    const seen = new Set();
-    return conversationTimelineQuestionCandidates(root).flatMap((node) => {
-      if (node.closest('[data-app-action-sidebar-thread-id]')) return [];
-      if (isExtensionUiNode(node)) return [];
-      const target = node.closest('[data-testid="conversation-turn"]') || node;
-      if (seen.has(target)) return [];
-      seen.add(target);
-      if (!visibleTimelineNode(target)) return [];
-      const text = extractTimelineQuestionText(node);
-      if (!text) return [];
-      return [{ node: target, text, nodeId: timelineNodeId(target) }];
-    });
-  }
-
-  function timelineScrollerViewportTop(scroller) {
+  function scrollerViewportTop(scroller) {
     if (scroller === document.scrollingElement || scroller === document.documentElement || scroller === document.body) return 0;
     return scroller.getBoundingClientRect().top;
   }
 
-  function timelineScrollableHeight(scroller) {
-    return Math.max(1, scroller.scrollHeight - scroller.clientHeight);
-  }
-
-  function timelineRawMarkerTop(question, scroller) {
-    const scrollOffset = scroller.scrollTop + question.node.getBoundingClientRect().top - timelineScrollerViewportTop(scroller);
-    const percent = (scrollOffset / timelineScrollableHeight(scroller)) * 100;
-    return Math.max(timelineMinTopPercent, Math.min(timelineMaxTopPercent, percent));
-  }
-
-  function timelineMarkerTops(questions, scroller) {
-    if (questions.length <= 1) return [50];
-    const minGap = Math.min(timelineMaxMarkerGapPercent, (timelineMaxTopPercent - timelineMinTopPercent) / Math.max(questions.length - 1, 1));
-    const tops = questions.map((question) => timelineRawMarkerTop(question, scroller));
-    for (let index = 1; index < tops.length; index += 1) {
-      tops[index] = Math.max(tops[index], tops[index - 1] + minGap);
-    }
-    for (let index = tops.length - 1; index >= 0; index -= 1) {
-      const maxForIndex = timelineMaxTopPercent - ((tops.length - 1 - index) * minGap);
-      tops[index] = Math.min(tops[index], maxForIndex);
-    }
-    return tops.map((top) => Math.max(timelineMinTopPercent, Math.min(timelineMaxTopPercent, top)));
-  }
-
-  function removeConversationTimeline() {
-    document.querySelectorAll(`.${timelineClass}`).forEach((node) => node.remove());
-  }
-
-  function nearestTimelineScroller(node) {
+  function nearestScrollableAncestor(node) {
     for (let current = node?.parentElement; current; current = current.parentElement) {
       const style = getComputedStyle(current);
       if (/(auto|scroll)/.test(style.overflowY) && current.scrollHeight > current.clientHeight) return current;
     }
     return document.querySelector(".thread-scroll-container") || document.scrollingElement || document.documentElement;
-  }
-
-  function scrollTimelineTarget(node) {
-    const scroller = nearestTimelineScroller(node);
-    const nodeRect = node.getBoundingClientRect();
-    const nextTop = scroller.scrollTop + nodeRect.top - timelineScrollerViewportTop(scroller) - (scroller.clientHeight / 2) + (nodeRect.height / 2);
-    scroller.scrollTo({ top: nextTop, behavior: "smooth" });
-  }
-
-  function highlightTimelineTarget(node) {
-    node.classList.remove(timelineTargetClass);
-    void node.offsetWidth;
-    node.classList.add(timelineTargetClass);
-    clearTimeout(node.__codexConversationTimelineHighlightTimer);
-    node.__codexConversationTimelineHighlightTimer = setTimeout(() => {
-      node.classList.remove(timelineTargetClass);
-    }, 1300);
-  }
-
-  function createConversationTimelineMarker(question) {
-    const marker = document.createElement("button");
-    marker.type = "button";
-    marker.className = timelineMarkerClass;
-    marker.style.top = `${question.markerTop}%`;
-    marker.setAttribute("aria-label", `跳转到：${truncateTimelineQuestion(question.text)}`);
-    const tooltip = document.createElement("span");
-    tooltip.className = timelineTooltipClass;
-    tooltip.id = `codex-conversation-timeline-tooltip-${question.nodeId}`;
-    tooltip.setAttribute("role", "tooltip");
-    tooltip.textContent = truncateTimelineQuestion(question.text);
-    marker.setAttribute("aria-describedby", tooltip.id);
-    marker.appendChild(tooltip);
-    const activateMarker = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation?.();
-      document.querySelectorAll(`.${timelineMarkerClass}.codex-conversation-timeline-marker-active`).forEach((node) => {
-        node.classList.remove("codex-conversation-timeline-marker-active");
-      });
-      marker.classList.add("codex-conversation-timeline-marker-active");
-      scrollTimelineTarget(question.node);
-      highlightTimelineTarget(question.node);
-    };
-    marker.addEventListener("pointerup", activateMarker, true);
-    marker.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") activateMarker(event);
-    }, true);
-    return marker;
-  }
-
-  function prepareTimelineQuestions(questions) {
-    if (questions.length === 0) return [];
-    const scroller = nearestTimelineScroller(questions[0].node);
-    const tops = timelineMarkerTops(questions, scroller);
-    return questions.map((question, index) => ({ ...question, markerTop: Number(tops[index].toFixed(3)) }));
-  }
-
-  function timelineSignature(questions) {
-    return questions.map((question) => `${question.nodeId}:${Math.round(question.markerTop * 10)}:${truncateTimelineQuestion(question.text)}`).join("|");
-  }
-
-  function refreshConversationTimeline() {
-    if (!codexPlusSettings().conversationTimeline) {
-      removeConversationTimeline();
-      return;
-    }
-    const questions = prepareTimelineQuestions(conversationTimelineQuestions());
-    if (questions.length === 0) {
-      removeConversationTimeline();
-      return;
-    }
-    const signature = timelineSignature(questions);
-    const existing = document.querySelector(`.${timelineClass}`);
-    if (
-      existing?.dataset.codexConversationTimelineVersion === codexConversationTimelineVersion &&
-      existing?.dataset.codexConversationTimelineSignature === signature
-    ) {
-      return;
-    }
-    removeConversationTimeline();
-    const container = document.createElement("div");
-    container.className = timelineClass;
-    container.dataset.codexConversationTimelineVersion = codexConversationTimelineVersion;
-    container.dataset.codexConversationTimelineSignature = signature;
-    const track = document.createElement("div");
-    track.className = timelineTrackClass;
-    container.appendChild(track);
-    questions.forEach((question) => {
-      container.appendChild(createConversationTimelineMarker(question));
-    });
-    document.body.appendChild(container);
   }
 
   const conversationViewContentClasses = [
@@ -7956,6 +8053,7 @@
     installStyle();
     installCodexServiceTierDispatcherPatch();
     installCodexPlusMenu();
+    localizeCodexMenus();
     scheduleBackendHeartbeat();
     installDeleteButtonEventDelegation();
     updateThreadScrollHandlers();
@@ -8563,9 +8661,6 @@
       const pluginUnlockStrategy = codexPluginUnlockStrategy();
       const settings = codexPlusSettings();
       logCodexPluginUnlockStrategy(pluginUnlockStrategy);
-      if ((pluginUnlockStrategy === "legacy" || pluginUnlockStrategy === "unknown") && settings.pluginEntryUnlock) {
-        enablePluginEntry();
-      }
       if ((pluginUnlockStrategy === "modern" || pluginUnlockStrategy === "unknown") && settings.pluginMarketplaceUnlock) {
         const marketplaceRequestPatchStrategy = codexPluginMarketplaceRequestPatchStrategy();
         installPluginBuildFlavorFilterPatch();
@@ -8588,11 +8683,11 @@
     scheduleProjectMoveProjection();
     scheduleChatsSortCorrection();
     archivedPageRows().forEach(attachArchivedPageDeleteButton);
-    refreshConversationTimeline();
     refreshConversationView();
     installCodexServiceTierBadge();
     scheduleThreadScrollSync();
     refreshCodexModelWhitelistFromScan(window.__codexSessionDeleteLastMutations);
+    schedulePluginAutoExpand();
   }
 
   function runScanStep(step) {
@@ -8610,7 +8705,7 @@
   }
 
   function isExtensionUiNode(node) {
-    return !!node?.closest?.(`.codex-delete-toast, .codex-delete-confirm-overlay, .codex-plus-modal-overlay, .${projectMoveOverlayClass}, .${timelineClass}, .codex-conversation-timeline, .${codexServiceTierBadgeClass}, .codex-zed-remote-button, .codex-zed-remote-toast, #codex-plus-menu`);
+    return !!node?.closest?.(`.codex-delete-toast, .codex-delete-confirm-overlay, .codex-plus-modal-overlay, .${projectMoveOverlayClass}, .${codexServiceTierBadgeClass}, .codex-zed-remote-button, .codex-zed-remote-toast, #codex-plus-menu`);
   }
 
   function scanRelevantSelector() {
@@ -8628,6 +8723,7 @@
       ".composer-footer",
       selectors.appHeader,
       selectors.archiveNav,
+      codexMenuLocalizationScopeSelector(),
       ...(pluginPatchDisabledInRelayMode() ? [] : [selectors.disabledInstallButton]),
     ].join(", ");
   }
@@ -8635,19 +8731,16 @@
   function nodeSelfOrAncestorMatchesScanRelevance(node) {
     if (node.nodeType !== 1) return false;
     if (isExtensionUiNode(node)) return false;
-    const questionSelector = timelineQuestionSelector();
     const relevantSelector = scanRelevantSelector();
     return !!node.matches?.(relevantSelector) ||
       !!node.closest?.(relevantSelector) ||
-      !!node.matches?.(questionSelector) ||
-      !!node.closest?.(questionSelector) ||
       nodeOrAncestorLooksLikeCodexUserBubble(node);
   }
 
   function isScanRelevantNode(node) {
     if (node.nodeType !== 1) return false;
     if (isExtensionUiNode(node)) return false;
-    return nodeSelfOrAncestorMatchesScanRelevance(node) || !!node.querySelector?.(scanRelevantSelector()) || nodeLooksLikeTimelineQuestion(node);
+    return nodeSelfOrAncestorMatchesScanRelevance(node) || !!node.querySelector?.(scanRelevantSelector()) || nodeLooksLikeCodexUserBubble(node);
   }
 
   function isChatContentMutation(mutation) {
@@ -8679,6 +8772,7 @@
   function scheduleScan(mutations) {
     window.__codexSessionDeleteLastMutations = mutations;
     scheduleZedRemoteMenuRefresh(mutations);
+    schedulePluginAutoExpand();
     if (!shouldScheduleScan(mutations)) return;
     if (window.__codexSessionDeleteScanPending) return;
     window.__codexSessionDeleteScanPending = true;
@@ -8705,7 +8799,6 @@
       });
       syncActionGroupsLayout();
       updateFloatingCodexPlusMenuPosition(document.getElementById(codexPlusMenuId));
-      runScanStep(refreshConversationTimeline);
       runScanStep(refreshConversationView);
     });
   };
