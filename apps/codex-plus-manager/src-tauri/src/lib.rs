@@ -52,6 +52,9 @@ pub fn run() {
             commands::save_settings,
             commands::load_ccs_providers,
             commands::import_ccs_providers,
+            commands::load_pending_provider_import,
+            commands::confirm_pending_provider_import,
+            commands::dismiss_pending_provider_import,
             commands::list_local_sessions,
             commands::list_zed_remote_projects,
             commands::open_zed_remote,
@@ -234,14 +237,14 @@ fn install_panic_logger() {
 
 fn acquire_single_instance_guard() -> Option<codex_plus_core::ports::LoopbackPortGuard> {
     match codex_plus_core::ports::acquire_resilient_loopback_port_guard(
-        codex_plus_core::ports::MANAGER_GUARD_PORT,
+        codex_plus_core::ports::manager_guard_port(),
     ) {
         Ok(guard) => {
             if let Some(fallback_lock_path) = guard.fallback_path() {
                 let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
                     "manager.guard_fallback",
                     serde_json::json!({
-                        "requested_guard_port": codex_plus_core::ports::MANAGER_GUARD_PORT,
+                        "requested_guard_port": codex_plus_core::ports::manager_guard_port(),
                         "fallback_lock_path": fallback_lock_path
                     }),
                 );
@@ -252,7 +255,7 @@ fn acquire_single_instance_guard() -> Option<codex_plus_core::ports::LoopbackPor
             let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
                 "manager.already_running",
                 serde_json::json!({
-                    "guard_port": codex_plus_core::ports::MANAGER_GUARD_PORT
+                    "guard_port": codex_plus_core::ports::manager_guard_port()
                 }),
             );
             None
@@ -261,7 +264,7 @@ fn acquire_single_instance_guard() -> Option<codex_plus_core::ports::LoopbackPor
             let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
                 "manager.already_running",
                 serde_json::json!({
-                    "guard_port": codex_plus_core::ports::MANAGER_GUARD_PORT
+                    "guard_port": codex_plus_core::ports::manager_guard_port()
                 }),
             );
             None
@@ -270,7 +273,7 @@ fn acquire_single_instance_guard() -> Option<codex_plus_core::ports::LoopbackPor
             let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
                 "manager.guard_failed",
                 serde_json::json!({
-                    "guard_port": codex_plus_core::ports::MANAGER_GUARD_PORT,
+                    "guard_port": codex_plus_core::ports::manager_guard_port(),
                     "error": error.to_string()
                 }),
             );
