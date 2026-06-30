@@ -32,6 +32,7 @@ pub mod script_market;
 pub mod service_tier_preload;
 pub mod settings;
 pub mod status;
+pub mod stepwise;
 pub mod update;
 pub mod upstream_worktree;
 pub mod user_scripts;
