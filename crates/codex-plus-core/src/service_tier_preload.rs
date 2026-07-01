@@ -111,6 +111,10 @@ function patchReadServiceTierAsset(source) {
         "return n===`chatgpt`?(await e.query.fetch(Bu,{authMethod:n,hostId:t})).requirements?.featureRequirements?.fast_mode!==!1:!1",
         "return n===`chatgpt`?(await e.query.fetch(Bu,{authMethod:n,hostId:t})).requirements?.featureRequirements?.fast_mode!==!1:n===`apikey`",
       ],
+      [
+        "return n===`chatgpt`?(await e.query.fetch(Gd,{authMethod:n,hostId:t})).requirements?.featureRequirements?.fast_mode!==!1:!1",
+        "return n===`chatgpt`?(await e.query.fetch(Gd,{authMethod:n,hostId:t})).requirements?.featureRequirements?.fast_mode!==!1:n===`apikey`",
+      ],
     ],
     "read service tier auth gate"
   );
@@ -128,6 +132,10 @@ function patchReadServiceTierAsset(source) {
       [
         "return o.service_tier==null?Pc(await xAe(t,n??o.model),o.service_tier,r):Pc(null,o.service_tier,r)",
         "return o.service_tier==null?Pc(await xAe(t,n??o.model),o.service_tier,r):Pc(await xAe(t,n??o.model),o.service_tier,r)",
+      ],
+      [
+        "return o.service_tier==null?jd(await fQe(t,n??o.model),o.service_tier,r):jd(null,o.service_tier,r)",
+        "return o.service_tier==null?jd(await fQe(t,n??o.model),o.service_tier,r):jd(await fQe(t,n??o.model),o.service_tier,r)",
       ],
     ],
     "read service tier explicit config model lookup"
@@ -311,6 +319,8 @@ mod tests {
         assert!(script.contains("isReadServiceTierCandidate"));
         assert!(script.contains("replaceOneOf"));
         assert!(script.contains("a=i?.authMethod===`chatgpt`||i?.authMethod===`apikey`"));
+        assert!(script.contains("e.query.fetch(Gd,{authMethod:n,hostId:t})"));
+        assert!(script.contains("jd(await fQe(t,n??o.model),o.service_tier,r)"));
         assert!(script.contains("n===`apikey`"));
     }
 }
