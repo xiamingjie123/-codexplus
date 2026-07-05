@@ -558,6 +558,60 @@ experimental_bearer_token = "sk-a"
 }
 
 #[test]
+fn apply_relay_files_preserves_live_desktop_personalization_settings() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join("config.toml"),
+        r#"model = "old"
+
+[desktop]
+composerEnterBehavior = "cmdAlways"
+followUpQueueMode = "queue"
+selected-avatar-id = "avatar-local"
+"#,
+    )
+    .unwrap();
+
+    apply_relay_files_to_home(
+        temp.path(),
+        r#"model_provider = "custom"
+
+[desktop]
+composerEnterBehavior = "enter"
+selected-avatar-id = "avatar-from-profile"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay-a.example/v1"
+experimental_bearer_token = "sk-a"
+"#,
+        r#"{"OPENAI_API_KEY":"sk-a"}"#,
+    )
+    .unwrap();
+
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    let parsed: toml::Value = config.parse().unwrap();
+    assert_eq!(
+        parsed["desktop"]["composerEnterBehavior"].as_str(),
+        Some("cmdAlways")
+    );
+    assert_eq!(
+        parsed["desktop"]["followUpQueueMode"].as_str(),
+        Some("queue")
+    );
+    assert_eq!(
+        parsed["desktop"]["selected-avatar-id"].as_str(),
+        Some("avatar-local")
+    );
+    assert_eq!(
+        parsed["model_providers"]["custom"]["base_url"].as_str(),
+        Some("https://relay-a.example/v1")
+    );
+}
+
+#[test]
 fn apply_relay_files_allows_empty_isolated_auth_json() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::write(temp.path().join("auth.json"), r#"{"OPENAI_API_KEY":"old"}"#).unwrap();
