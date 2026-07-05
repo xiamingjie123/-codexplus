@@ -1,6 +1,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use toml_edit::{Array, DocumentMut, Item, Table};
@@ -77,6 +78,13 @@ pub(crate) fn ensure_computer_use_config_with_artifacts(
     }
 }
 
+pub(crate) fn ensure_builtin_plugin_state_after_provider_switch(
+    home: &Path,
+) -> anyhow::Result<GuardResult> {
+    let artifacts = resolve_computer_use_guard_artifacts(home)?;
+    ensure_computer_use_config_with_artifacts(home, &artifacts)
+}
+
 #[cfg(windows)]
 fn ensure_computer_use_config_with_artifacts_windows(
     home: &Path,
@@ -102,6 +110,7 @@ fn ensure_computer_use_config_with_artifacts_windows(
     };
     let changed = updated.as_bytes() != existing.as_bytes();
     if changed {
+        backup_config_before_guard_write(home, &existing)?;
         crate::settings::atomic_write(&config_path, updated.as_bytes())?;
     }
     let runtime_compat = ensure_computer_use_runtime_exports_compat_windows(
@@ -219,6 +228,11 @@ pub(crate) fn guard_config_text_with_marketplace(
 
     let features = table_mut_or_insert(&mut doc, "features")?;
     features["js_repl"] = toml_edit::value(true);
+    features["local_shell"] = toml_edit::value(true);
+    features["computer_use"] = toml_edit::value(true);
+
+    let windows = table_mut_or_insert(&mut doc, "windows")?;
+    windows["sandbox"] = toml_edit::value("unelevated");
 
     for plugin_id in COMPUTER_USE_PLUGINS {
         ensure_plugin_enabled(&mut doc, plugin_id)?;
@@ -236,6 +250,28 @@ pub(crate) fn guard_config_text_with_marketplace(
     }
 
     Ok(ensure_trailing_newline(doc.to_string()))
+}
+
+#[cfg(windows)]
+fn backup_config_before_guard_write(
+    home: &Path,
+    existing: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let config_path = home.join("config.toml");
+    if existing.is_empty() && !config_path.is_file() {
+        return Ok(None);
+    }
+    let backup_dir = home.join("backups").join("computer-use-guard");
+    std::fs::create_dir_all(&backup_dir)?;
+    let backup_path = backup_dir.join(format!(
+        "config.toml.{}.bak",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+    std::fs::write(&backup_path, existing)?;
+    Ok(Some(backup_path))
 }
 
 pub(crate) fn find_computer_use_notify_exe(home: &Path) -> Option<PathBuf> {
@@ -791,6 +827,10 @@ mod tests {
 
         assert!(!updated.as_bytes().starts_with(&[0xef, 0xbb, 0xbf]));
         assert!(updated.contains("js_repl = true"));
+        assert!(updated.contains("local_shell = true"));
+        assert!(updated.contains("computer_use = true"));
+        assert!(updated.contains("[windows]"));
+        assert!(updated.contains("sandbox = \"unelevated\""));
         assert!(updated.contains("[plugins.\"browser@openai-bundled\"]"));
         assert!(updated.contains("[plugins.\"chrome@openai-bundled\"]"));
         assert!(updated.contains("[plugins.\"computer-use@openai-bundled\"]"));
@@ -814,6 +854,10 @@ mod tests {
 
         assert!(updated.contains("[features]"));
         assert!(updated.contains("js_repl = true"));
+        assert!(updated.contains("local_shell = true"));
+        assert!(updated.contains("computer_use = true"));
+        assert!(updated.contains("[windows]"));
+        assert!(updated.contains("sandbox = \"unelevated\""));
         for plugin_id in COMPUTER_USE_PLUGINS {
             assert!(updated.contains(&format!("[plugins.\"{plugin_id}\"]")));
         }
@@ -836,6 +880,45 @@ mod tests {
         assert_eq!(
             parsed["marketplaces"]["openai-bundled"]["source"].as_str(),
             Some(r"\\?\C:\Users\me\.codex\.tmp\bundled-marketplaces\openai-bundled")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_computer_use_config_writes_backup_before_config_update() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let config_path = home.join("config.toml");
+        let original = "model = \"gpt-5\"\n";
+        std::fs::write(&config_path, original).unwrap();
+        let marketplace = home
+            .join(".tmp")
+            .join("bundled-marketplaces")
+            .join(BUNDLED_MARKETPLACE);
+        let artifacts = GuardArtifacts {
+            notify_exe: None,
+            marketplace_path: Some(marketplace),
+            sky_package_json: None,
+            runtime_exports_needed: false,
+        };
+
+        let result = ensure_computer_use_config_with_artifacts_windows(home, &artifacts).unwrap();
+
+        assert!(result.changed);
+        let updated = std::fs::read_to_string(&config_path).unwrap();
+        assert!(updated.contains("computer_use = true"));
+        assert!(updated.contains("[windows]"));
+        assert!(updated.contains("sandbox = \"unelevated\""));
+        assert!(updated.contains("[marketplaces.openai-bundled]"));
+        let backup_dir = home.join("backups").join("computer-use-guard");
+        let backups = std::fs::read_dir(&backup_dir)
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(backups[0].path()).unwrap(),
+            original
         );
     }
 

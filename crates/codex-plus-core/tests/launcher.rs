@@ -217,6 +217,7 @@ fn launcher_does_not_override_codex_app_environment() {
     assert!(!source.contains(".envs(codex_process_environment())"));
     assert!(!source.contains("activate_packaged_app_with_environment"));
     assert!(!source.contains("with_temporary_proxy_environment"));
+    assert!(source.contains("CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE"));
 }
 
 #[test]
@@ -622,6 +623,7 @@ async fn launch_lifecycle_runs_enabled_maintenance_without_applying_relay_profil
             "load-settings",
             "provider-sync",
             "computer-use-guard",
+            "builtin-plugin-state:launcher.before_launch",
             "start-helper:57321",
             "launch:9229",
             "computer-use-guard-watchdog",
@@ -837,13 +839,45 @@ async fn launch_lifecycle_runs_computer_use_guard_when_enabled() {
 }
 
 #[tokio::test]
-async fn launch_lifecycle_skips_computer_use_guard_by_default() {
+async fn launch_lifecycle_runs_builtin_plugin_guard_with_plugin_unlock_by_default() {
     let temp = tempfile::tempdir().unwrap();
     let app_dir = temp.path().join("Codex.app");
     std::fs::create_dir_all(&app_dir).unwrap();
     let status_store = StatusStore::new(temp.path().join("latest-status.json"));
     let events = Arc::new(Mutex::new(Vec::<String>::new()));
     let hooks = FakeHooks::new(events.clone());
+
+    let handle = launch_and_inject_with_hooks(
+        LaunchOptions {
+            app_dir: Some(app_dir),
+            debug_port: 9229,
+            helper_port: 57321,
+            status_store,
+        },
+        &hooks,
+    )
+    .await
+    .unwrap();
+    handle.wait_for_codex_exit().await.unwrap();
+
+    let events = events.lock().unwrap().clone();
+    assert!(events.contains(&"computer-use-guard".to_string()));
+    assert!(events.contains(&"computer-use-guard-watchdog".to_string()));
+    assert!(events.contains(&"launch:9229".to_string()));
+}
+
+#[tokio::test]
+async fn launch_lifecycle_skips_builtin_plugin_guard_when_unlock_and_guard_are_disabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let app_dir = temp.path().join("Codex.app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    let status_store = StatusStore::new(temp.path().join("latest-status.json"));
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let hooks = FakeHooks::new(events.clone()).with_settings(BackendSettings {
+        codex_app_plugin_marketplace_unlock: false,
+        computer_use_guard_enabled: false,
+        ..BackendSettings::default()
+    });
 
     let handle = launch_and_inject_with_hooks(
         LaunchOptions {
@@ -921,7 +955,6 @@ async fn launch_lifecycle_skips_active_relay_profile_when_supplier_config_disabl
 
     let events = events.lock().unwrap().clone();
     assert!(!events.contains(&"apply-relay".to_string()));
-    assert!(!events.contains(&"computer-use-guard".to_string()));
     assert!(events.contains(&"launch:9229".to_string()));
 }
 
@@ -973,7 +1006,6 @@ experimental_bearer_token = "sk-test"
 
     let events = events.lock().unwrap().clone();
     assert!(!events.contains(&"apply-relay".to_string()));
-    assert!(!events.contains(&"computer-use-guard".to_string()));
     assert!(events.contains(&"launch:9229".to_string()));
 }
 
@@ -1004,8 +1036,10 @@ async fn launch_lifecycle_enters_degraded_mode_and_retries_when_injection_fails(
             "select-debug:9229",
             "select-helper:57321",
             "load-settings",
+            "computer-use-guard",
             "start-helper:57321",
             "launch:9229",
+            "computer-use-guard-watchdog",
             "inject:9229:57321",
             "status:running_degraded",
         ]
@@ -1049,6 +1083,7 @@ async fn launch_lifecycle_cleans_helper_when_launch_fails_after_helper_started()
             "select-debug:9229",
             "select-helper:57321",
             "load-settings",
+            "computer-use-guard",
             "start-helper:57321",
             "launch:9229",
             "shutdown-helper:57321",
@@ -1156,8 +1191,10 @@ async fn launch_lifecycle_cleans_helper_and_codex_when_status_save_fails() {
             "select-debug:9229",
             "select-helper:57321",
             "load-settings",
+            "computer-use-guard",
             "start-helper:57321",
             "launch:9229",
+            "computer-use-guard-watchdog",
             "inject:9229:57321",
             "shutdown-helper:57321",
             "terminate-packaged:4242",
@@ -1244,8 +1281,10 @@ async fn launch_continues_when_plugin_marketplace_config_fails() {
             "select-helper:57321",
             "load-settings",
             "plugin-marketplace",
+            "computer-use-guard",
             "start-helper:57321",
             "launch:9229",
+            "computer-use-guard-watchdog",
             "inject:9229:57321",
             "status:running"
         ]
@@ -1292,6 +1331,7 @@ async fn default_launch_hooks_provider_sync_enabled_returns_explicit_error() {
 #[derive(Clone)]
 struct FakeHooks {
     events: Arc<Mutex<Vec<String>>>,
+    codex_home: Arc<tempfile::TempDir>,
     settings: BackendSettings,
     launch_result: CodexLaunch,
     launch_error: Option<String>,
@@ -1304,6 +1344,7 @@ impl FakeHooks {
     fn new(events: Arc<Mutex<Vec<String>>>) -> Self {
         Self {
             events,
+            codex_home: Arc::new(tempfile::tempdir().unwrap()),
             settings: BackendSettings::default(),
             launch_result: CodexLaunch::Process {
                 command: vec!["codex".to_string()],
@@ -1374,6 +1415,10 @@ impl LaunchHooks for FakeHooks {
         requested
     }
 
+    fn codex_home(&self) -> PathBuf {
+        self.codex_home.path().to_path_buf()
+    }
+
     async fn load_settings(&self) -> anyhow::Result<BackendSettings> {
         self.event("load-settings");
         Ok(self.settings.clone())
@@ -1397,6 +1442,15 @@ impl LaunchHooks for FakeHooks {
 
     async fn ensure_computer_use_config(&self, _settings: &BackendSettings) -> anyhow::Result<()> {
         self.event("computer-use-guard");
+        Ok(())
+    }
+
+    async fn ensure_builtin_plugin_state_after_provider_switch(
+        &self,
+        _settings: &BackendSettings,
+        source: &str,
+    ) -> anyhow::Result<()> {
+        self.event(format!("builtin-plugin-state:{source}"));
         Ok(())
     }
 
