@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -505,6 +506,8 @@ struct LauncherRuntimeService {
     debug_port: Mutex<u16>,
     websocket_url: Mutex<Option<String>>,
     user_scripts: UserScriptManager,
+    user_script_snapshot: Mutex<Option<codex_plus_core::user_scripts::UserScriptSnapshot>>,
+    user_script_hot_reload_started: AtomicBool,
 }
 
 impl LauncherRuntimeService {
@@ -513,6 +516,8 @@ impl LauncherRuntimeService {
             debug_port: Mutex::new(debug_port),
             websocket_url: Mutex::new(None),
             user_scripts,
+            user_script_snapshot: Mutex::new(None),
+            user_script_hot_reload_started: AtomicBool::new(false),
         }
     }
 
@@ -522,6 +527,69 @@ impl LauncherRuntimeService {
 
     fn set_websocket_url(&self, websocket_url: &str) {
         *self.websocket_url.lock().unwrap() = Some(websocket_url.to_string());
+    }
+
+    async fn reload_user_scripts_now(&self) -> anyhow::Result<Value> {
+        let bundle = self.user_scripts.build_enabled_bundle()?;
+        let websocket_url = self.websocket_url.lock().unwrap().clone();
+        if let Some(websocket_url) = websocket_url.filter(|_| !bundle.trim().is_empty()) {
+            codex_plus_core::bridge::evaluate_script(&websocket_url, &bundle).await?;
+        }
+        self.remember_user_script_snapshot();
+        self.user_scripts.inventory()
+    }
+
+    fn remember_user_script_snapshot(&self) {
+        match self.user_scripts.snapshot() {
+            Ok(snapshot) => {
+                *self.user_script_snapshot.lock().unwrap() = Some(snapshot);
+            }
+            Err(error) => {
+                let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                    "user_scripts.snapshot_failed",
+                    json!({ "error": error.to_string() }),
+                );
+            }
+        }
+    }
+
+    async fn reload_user_scripts_if_changed(&self) -> anyhow::Result<bool> {
+        let current = self.user_scripts.snapshot()?;
+        let changed = {
+            let snapshot = self.user_script_snapshot.lock().unwrap();
+            !matches!(snapshot.as_ref(), Some(previous) if previous == &current)
+        };
+        if !changed {
+            return Ok(false);
+        }
+        self.reload_user_scripts_now().await?;
+        let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+            "user_scripts.hot_reload",
+            json!({ "status": "ok" }),
+        );
+        Ok(true)
+    }
+
+    fn start_user_script_hot_reload_watchdog(self: &Arc<Self>) {
+        if self
+            .user_script_hot_reload_started
+            .swap(true, Ordering::SeqCst)
+        {
+            return;
+        }
+        let runtime = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                if let Err(error) = runtime.reload_user_scripts_if_changed().await {
+                    let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                        "user_scripts.hot_reload_failed",
+                        json!({ "error": error.to_string() }),
+                    );
+                }
+            }
+        });
     }
 }
 
@@ -533,26 +601,21 @@ impl BridgeRuntimeService for LauncherRuntimeService {
 
     async fn set_user_scripts_enabled(&self, enabled: bool) -> anyhow::Result<Value> {
         self.user_scripts.set_global_enabled(enabled)?;
-        self.user_scripts.inventory()
+        self.reload_user_scripts_now().await
     }
 
     async fn set_user_script_enabled(&self, key: String, enabled: bool) -> anyhow::Result<Value> {
         self.user_scripts.set_script_enabled(&key, enabled)?;
-        self.user_scripts.inventory()
+        self.reload_user_scripts_now().await
     }
 
     async fn delete_user_script(&self, key: String) -> anyhow::Result<Value> {
         self.user_scripts.delete_user_script(&key)?;
-        self.user_scripts.inventory()
+        self.reload_user_scripts_now().await
     }
 
     async fn reload_user_scripts(&self) -> anyhow::Result<Value> {
-        let bundle = self.user_scripts.build_enabled_bundle()?;
-        let websocket_url = self.websocket_url.lock().unwrap().clone();
-        if let Some(websocket_url) = websocket_url.filter(|_| !bundle.trim().is_empty()) {
-            codex_plus_core::bridge::evaluate_script(&websocket_url, &bundle).await?;
-        }
-        self.user_scripts.inventory()
+        self.reload_user_scripts_now().await
     }
 
     async fn open_devtools(&self) -> anyhow::Result<Value> {
@@ -714,7 +777,10 @@ async fn try_inject_with_context(
         }),
         &new_document_scripts,
     )
-    .await
+    .await?;
+    runtime.remember_user_script_snapshot();
+    runtime.start_user_script_hot_reload_watchdog();
+    Ok(())
 }
 
 fn default_codex_db_path() -> PathBuf {
@@ -832,6 +898,16 @@ mod tests {
         assert!(source.contains("async fn start_computer_use_guard_watchdog"));
         assert!(source.contains("self.core"));
         assert!(source.contains(".start_computer_use_guard_watchdog(settings)"));
+    }
+
+    #[test]
+    fn launcher_starts_user_script_hot_reload_watchdog_after_bridge_injection() {
+        let source = include_str!("main.rs");
+
+        assert!(source.contains("start_user_script_hot_reload_watchdog"));
+        assert!(source.contains("reload_user_scripts_if_changed"));
+        assert!(source.contains("user_scripts.snapshot()"));
+        assert!(source.contains("user_script_hot_reload_started"));
     }
 
     #[test]

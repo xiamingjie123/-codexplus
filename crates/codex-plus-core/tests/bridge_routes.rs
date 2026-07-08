@@ -722,6 +722,72 @@ async fn core_runtime_reload_evaluates_enabled_user_bundle_and_status_is_ok() {
 }
 
 #[tokio::test]
+async fn core_runtime_toggling_user_script_reloads_current_page_bundle() {
+    let temp = tempfile::tempdir().unwrap();
+    let user_dir = temp.path().join("user");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    std::fs::write(user_dir.join("demo.js"), "window.demoReloaded = true;").unwrap();
+    let manager = UserScriptManager::new(
+        temp.path().join("builtin"),
+        user_dir,
+        temp.path().join("user_scripts.json"),
+    );
+    let evaluated = Arc::new(Mutex::new(Vec::<String>::new()));
+    let runtime = CoreRuntimeService::new(9229, StatusStore::default())
+        .with_user_scripts(manager)
+        .with_user_script_evaluator({
+            let evaluated = evaluated.clone();
+            Arc::new(move |websocket_url, script| {
+                evaluated
+                    .lock()
+                    .unwrap()
+                    .push(format!("{websocket_url}:{script}"));
+                Ok(json!({"status": "ok"}))
+            })
+        })
+        .with_websocket_url("ws://page");
+    let ctx = BridgeContext::core_with_data(Arc::new(runtime), Arc::new(FakeData::default()));
+
+    let toggled = handle_bridge_request(
+        ctx,
+        "/user-scripts/set-script-enabled",
+        json!({"key": "user:demo.js", "enabled": true}),
+    )
+    .await;
+
+    assert_eq!(toggled["scripts"][0]["enabled"], true);
+    let evaluated = evaluated.lock().unwrap();
+    assert_eq!(evaluated.len(), 1);
+    assert!(evaluated[0].contains("window.demoReloaded = true;"));
+}
+
+#[test]
+fn user_script_snapshot_changes_when_script_or_config_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let user_dir = temp.path().join("user");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    std::fs::write(user_dir.join("demo.js"), "window.version = 1;").unwrap();
+    let manager = UserScriptManager::new(
+        temp.path().join("builtin"),
+        user_dir,
+        temp.path().join("user_scripts.json"),
+    );
+
+    let initial = manager.snapshot().unwrap();
+    std::fs::write(
+        temp.path().join("user").join("demo.js"),
+        "window.version = 2;",
+    )
+    .unwrap();
+    let changed_script = manager.snapshot().unwrap();
+    manager.set_script_enabled("user:demo.js", false).unwrap();
+    let changed_config = manager.snapshot().unwrap();
+
+    assert_ne!(initial, changed_script);
+    assert_ne!(changed_script, changed_config);
+}
+
+#[tokio::test]
 async fn core_runtime_open_devtools_uses_inspector_url_opener() {
     let opened = Arc::new(Mutex::new(Vec::<String>::new()));
     let runtime = CoreRuntimeService::new(9229, StatusStore::default())

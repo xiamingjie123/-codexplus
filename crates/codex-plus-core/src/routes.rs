@@ -379,7 +379,7 @@ impl BridgeRuntimeService for CoreRuntimeService {
         match &self.user_scripts {
             Some(user_scripts) => {
                 user_scripts.set_global_enabled(enabled)?;
-                user_scripts.inventory()
+                self.reload_user_scripts().await
             }
             None => {
                 let mut inventory = empty_user_script_inventory();
@@ -393,7 +393,7 @@ impl BridgeRuntimeService for CoreRuntimeService {
         match &self.user_scripts {
             Some(user_scripts) => {
                 user_scripts.set_script_enabled(&key, enabled)?;
-                user_scripts.inventory()
+                self.reload_user_scripts().await
             }
             None => Ok(empty_user_script_inventory()),
         }
@@ -403,7 +403,7 @@ impl BridgeRuntimeService for CoreRuntimeService {
         match &self.user_scripts {
             Some(user_scripts) => {
                 user_scripts.delete_user_script(&key)?;
-                user_scripts.inventory()
+                self.reload_user_scripts().await
             }
             None => Ok(empty_user_script_inventory()),
         }
