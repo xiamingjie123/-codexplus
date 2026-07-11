@@ -366,6 +366,7 @@ pub fn apply_relay_profile_files_to_home_with_context(
         &profile.auto_compact_limit,
     )?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
+    let config_with_catalog = ensure_full_model_catalog(home, &config_with_catalog, profile)?;
     apply_relay_files_to_home(home, &config_with_catalog, &profile.auth_contents)
 }
 
@@ -403,6 +404,7 @@ pub fn apply_relay_profile_to_home_with_switch_rules_and_computer_use_guard(
         &profile.auto_compact_limit,
     )?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
+    let config_with_catalog = ensure_full_model_catalog(home, &config_with_catalog, profile)?;
 
     if profile.relay_mode == crate::settings::RelayMode::PureApi {
         apply_relay_files_to_home_with_computer_use_guard(
@@ -440,6 +442,7 @@ pub fn apply_relay_profile_config_to_home_with_context(
         &profile.auto_compact_limit,
     )?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
+    let config_with_catalog = ensure_full_model_catalog(home, &config_with_catalog, profile)?;
     apply_relay_config_file_to_home(home, &config_with_catalog)
 }
 
@@ -1487,6 +1490,51 @@ fn sanitize_catalog_filename(id: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Generate a full model catalog from profile.model_list for ALL models,
+/// regardless of whether they have context window suffixes.
+/// This follows the cc-switch pattern: pre-compute model_catalog_json so
+/// Codex can read models without waiting for an app-server RPC round-trip.
+///
+/// No-ops when:
+/// - model_catalog_json is already set by apply_model_catalog_to_config
+/// - model_list is empty
+fn ensure_full_model_catalog(
+    home: &Path,
+    config_text: &str,
+    profile: &RelayProfile,
+) -> anyhow::Result<String> {
+    let mut doc = parse_toml_document(config_text)?;
+    if doc.contains_key("model_catalog_json") {
+        return Ok(config_text.to_string());
+    }
+
+    let model_windows: std::collections::HashMap<String, String> =
+        serde_json::from_str(&profile.model_windows).unwrap_or_default();
+    let entries = crate::model_suffix::collect_catalog_entries(
+        &profile.model_list,
+        &model_windows,
+        &profile.model,
+    );
+
+    if entries.is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let fallback = parse_optional_positive_u64(&profile.context_window, "上下文大小")?;
+    let catalog_relative = format!(
+        "model-catalogs/{}.json",
+        sanitize_catalog_filename(&profile.id)
+    );
+    let catalog_path = home.join(&catalog_relative);
+    if let Some(parent) = catalog_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let catalog_json = crate::model_suffix::build_model_catalog_json(&entries, fallback);
+    std::fs::write(&catalog_path, catalog_json)?;
+    doc["model_catalog_json"] = toml_edit::value(catalog_relative);
+    Ok(normalize_optional_toml(doc))
 }
 
 fn sync_context_limits_from_config(profile: &mut RelayProfile, config_text: &str) {
