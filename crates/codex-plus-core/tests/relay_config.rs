@@ -1015,14 +1015,14 @@ enabled = true
 }
 
 #[test]
-fn apply_relay_profile_does_not_write_model_catalog_json_for_selected_models() {
+fn apply_relay_profile_writes_model_catalog_json_for_custom_model_with_context_window() {
     let temp = tempfile::tempdir().unwrap();
     let profile = RelayProfile {
         id: "relay-a".to_string(),
         name: "Relay A".to_string(),
-        model: "qwen3-coder".to_string(),
+        model: "mimo-v2.5".to_string(),
         relay_mode: RelayMode::PureApi,
-        config_contents: r#"model = "qwen3-coder"
+        config_contents: r#"model = "mimo-v2.5"
 model_provider = "custom"
 
 [model_providers.custom]
@@ -1035,19 +1035,143 @@ experimental_bearer_token = "sk-new"
         .to_string(),
         auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
         model_insert_mode: Default::default(),
-        model_list: "deepseek-coder\nqwen3-coder".to_string(),
-        context_window: "200000".to_string(),
-        auto_compact_limit: "160000".to_string(),
+        model_list: String::new(),
+        context_window: "1000000".to_string(),
+        auto_compact_limit: "800000".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+
+    // Check config has all expected settings
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(config.contains(r#"model = "mimo-v2.5""#));
+    assert!(config.contains("model_context_window = 1000000"));
+    assert!(config.contains("model_auto_compact_token_limit = 800000"));
+    // Custom model with context_window should generate a model_catalog_json entry
+    assert!(config.contains("model_catalog_json"), "Expected model_catalog_json for custom model with context_window");
+    assert!(config.contains("model_catalog_custom.json"));
+
+    // Check the custom catalog file was created
+    let catalog_path = temp.path().join("model_catalog_custom.json");
+    assert!(catalog_path.exists(), "Custom catalog file should exist");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&catalog_path).unwrap()).unwrap();
+    let models = catalog.get("models").and_then(|v| v.as_array()).unwrap();
+    assert_eq!(models.len(), 1);
+    let model_entry = &models[0];
+    assert_eq!(model_entry["slug"].as_str().unwrap(), "mimo-v2.5");
+    assert_eq!(model_entry["context_window"].as_u64().unwrap(), 1000000);
+    assert_eq!(model_entry["max_context_window"].as_u64().unwrap(), 1000000);
+    assert!(model_entry["base_instructions"].as_str().unwrap().contains("coding agent"));
+}
+
+#[test]
+fn apply_relay_profile_skips_custom_catalog_when_context_window_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-a".to_string(),
+        name: "Relay A".to_string(),
+        model: "mimo-v2.5".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "mimo-v2.5"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_insert_mode: Default::default(),
+        model_list: String::new(),
+        context_window: String::new(),   // empty = no override
+        auto_compact_limit: String::new(),
         ..RelayProfile::default()
     };
 
     apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
 
     let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(config.contains(r#"model = "mimo-v2.5""#));
+    // No context_window set → no model_context_window in config → no custom catalog
+    assert!(!config.contains("model_context_window"));
     assert!(!config.contains("model_catalog_json"));
-    assert!(config.contains("model_context_window = 200000"));
-    assert!(config.contains("model_auto_compact_token_limit = 160000"));
-    assert!(!temp.path().join("model-catalogs").exists());
+    assert!(!temp.path().join("model_catalog_custom.json").exists());
+}
+
+#[test]
+fn apply_relay_profile_skips_custom_catalog_when_model_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-a".to_string(),
+        name: "Relay A".to_string(),
+        model: String::new(),            // empty
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = ""
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_insert_mode: Default::default(),
+        model_list: String::new(),
+        context_window: "1000000".to_string(),
+        auto_compact_limit: "800000".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    // context_window is set, but model is empty → no custom catalog
+    assert!(config.contains("model_context_window = 1000000"));
+    assert!(!config.contains("model_catalog_json"));
+    assert!(!temp.path().join("model_catalog_custom.json").exists());
+}
+
+#[test]
+fn apply_relay_profile_does_not_override_existing_model_catalog_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-a".to_string(),
+        name: "Relay A".to_string(),
+        model: "mimo-v2.5".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "mimo-v2.5"
+model_catalog_json = "/custom/path/to/catalog.json"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_insert_mode: Default::default(),
+        model_list: String::new(),
+        context_window: "1000000".to_string(),
+        auto_compact_limit: "800000".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    // Existing model_catalog_json should be preserved, not overwritten
+    assert!(config.contains(r#"model_catalog_json = "/custom/path/to/catalog.json""#));
+    assert!(!config.contains("model_catalog_custom.json"));
+    assert!(!temp.path().join("model_catalog_custom.json").exists());
 }
 
 #[test]
@@ -2956,7 +3080,7 @@ experimental_bearer_token = "sk-new"
 }
 
 #[test]
-fn apply_relay_profile_no_catalog_when_model_list_has_no_suffix() {
+fn apply_relay_profile_generates_custom_catalog_when_context_window_set() {
     let temp = tempfile::tempdir().unwrap();
     let profile = RelayProfile {
         id: "relay-a".to_string(),
@@ -2985,9 +3109,14 @@ experimental_bearer_token = "sk-new"
     apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
 
     let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
-    assert!(!config.contains("model_catalog_json"));
+    // context_window set → custom fallback catalog is generated
+    assert!(config.contains("model_catalog_json"));
+    assert!(config.contains("model_catalog_custom.json"));
     assert!(config.contains("model_context_window = 200000"));
+    // But no suffix-based model-catalogs directory
     assert!(!temp.path().join("model-catalogs").exists());
+    // Custom catalog file exists
+    assert!(temp.path().join("model_catalog_custom.json").exists());
 }
 
 #[test]

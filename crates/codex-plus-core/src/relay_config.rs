@@ -366,6 +366,7 @@ pub fn apply_relay_profile_files_to_home_with_context(
         &profile.auto_compact_limit,
     )?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
+    let config_with_catalog = apply_custom_catalog_fallback(home, &config_with_catalog, profile)?;
     apply_relay_files_to_home(home, &config_with_catalog, &profile.auth_contents)
 }
 
@@ -403,6 +404,7 @@ pub fn apply_relay_profile_to_home_with_switch_rules_and_computer_use_guard(
         &profile.auto_compact_limit,
     )?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
+    let config_with_catalog = apply_custom_catalog_fallback(home, &config_with_catalog, profile)?;
 
     if profile.relay_mode == crate::settings::RelayMode::PureApi {
         apply_relay_files_to_home_with_computer_use_guard(
@@ -440,6 +442,7 @@ pub fn apply_relay_profile_config_to_home_with_context(
         &profile.auto_compact_limit,
     )?;
     let config_with_catalog = apply_model_catalog_to_config(home, profile, &config_with_limits)?;
+    let config_with_catalog = apply_custom_catalog_fallback(home, &config_with_catalog, profile)?;
     apply_relay_config_file_to_home(home, &config_with_catalog)
 }
 
@@ -1516,6 +1519,88 @@ fn root_positive_int_string(config_text: &str, key: &str) -> Option<String> {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .map(|value| value.to_string())
+}
+/// Fallback custom model catalog: only generates when `apply_model_catalog_to_config`
+/// hasn't already set `model_catalog_json` (e.g. no suffixes in model_list).
+fn apply_custom_catalog_fallback(
+    home: &Path,
+    config_text: &str,
+    profile: &RelayProfile,
+) -> anyhow::Result<String> {
+    let mut doc = parse_toml_document(config_text)?;
+    // Only generate when no catalog was set by apply_model_catalog_to_config
+    let context_window = parse_optional_positive_u64(&profile.context_window, "上下文大小")?;
+    if let Some(value) = context_window {
+        ensure_custom_model_catalog(home, &mut doc, value)?;
+    }
+    Ok(normalize_optional_toml(doc))
+}
+
+/// Generate a custom model catalog file for non-standard models that have
+/// an explicit `model_context_window` set. This allows Codex CLI to find
+/// the model in its catalog lookup and use the user-specified context window.
+///
+/// Skips generation if:
+/// - `model_catalog_json` is already set in the config
+/// - No `model` is configured
+fn ensure_custom_model_catalog(
+    home: &Path,
+    doc: &mut DocumentMut,
+    context_window: u64,
+) -> anyhow::Result<()> {
+    // Don't override an existing model_catalog_json setting
+    if doc.contains_key("model_catalog_json") {
+        return Ok(());
+    }
+
+    // Read model name from the TOML doc
+    let model = doc
+        .get("model")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let model = match model {
+        Some(m) if !m.is_empty() => m,
+        _ => return Ok(()),
+    };
+
+    let catalog_filename = "model_catalog_custom.json";
+    let catalog_path = home.join(catalog_filename);
+
+    // Use a display name derived from the slug
+    let display_name = model
+        .split(['-', '_'])
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let catalog = serde_json::json!({
+        "models": [{
+            "slug": model,
+            "display_name": display_name,
+            "base_instructions": "You are Codex, a coding agent that helps users write code.",
+            "context_window": context_window,
+            "max_context_window": context_window,
+            "effective_context_window_percent": 95
+        }]
+    });
+
+    let catalog_json = serde_json::to_string_pretty(&catalog)
+        .with_context(|| "序列化自定义模型目录失败")?;
+    crate::settings::atomic_write(&catalog_path, catalog_json.as_bytes())
+        .with_context(|| format!("写入自定义模型目录 {} 失败", catalog_path.display()))?;
+
+    doc["model_catalog_json"] = toml_edit::value(catalog_path.to_string_lossy().to_string());
+
+    Ok(())
 }
 
 fn toml_value_is_subset(target: &toml_edit::Value, source: &toml_edit::Value) -> bool {
