@@ -1629,3 +1629,39 @@ impl LaunchHooks for FakeHooks {
         }
     }
 }
+
+// === CDP readiness tests ===
+
+use codex_plus_core::launcher::wait_for_cdp_ready;
+
+#[tokio::test]
+async fn test_wait_for_cdp_ready_detects_magic_line() {
+    // Simulate stderr output matching Chrome/Electron's DevTools signal
+    let stderr = b"Some noise\nDevTools listening on ws://127.0.0.1:9222/devtools/browser/abc123\nMore output\n";
+    let result = wait_for_cdp_ready(&stderr[..]).await;
+    assert!(result.is_ok(), "should detect the magic line and return Ok(())");
+}
+
+#[tokio::test]
+async fn test_wait_for_cdp_ready_ignores_noise_before_magic() {
+    // Magic line appears after unrelated stderr output
+    let stderr = b"Warning: some warning\nInfo: starting up\nDevTools listening on ws://127.0.0.1:9222/devtools/browser/xyz\n";
+    let result = wait_for_cdp_ready(&stderr[..]).await;
+    assert!(result.is_ok(), "should find magic line after noise");
+}
+
+#[tokio::test]
+async fn test_wait_for_cdp_ready_err_on_eof_without_magic() {
+    // stderr closes without printing the DevTools line
+    let stderr = b"Some startup logging\nProcess exiting normally\n";
+    let result = wait_for_cdp_ready(&stderr[..]).await;
+    assert!(result.is_err(), "EOF without magic line should return Err");
+}
+
+#[tokio::test]
+async fn test_wait_for_cdp_ready_err_on_empty_stderr() {
+    // Empty stderr — should bail on EOF
+    let stderr = b"";
+    let result = wait_for_cdp_ready(&stderr[..]).await;
+    assert!(result.is_err(), "empty stderr should return Err on EOF");
+}
