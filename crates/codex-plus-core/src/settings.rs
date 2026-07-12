@@ -92,6 +92,29 @@ pub struct RelayProfile {
     /// DeepSeek/GLM/Kimi 等纯文本模型。默认 false（保留多模态行为）。
     #[serde(rename = "stripImages", default)]
     pub strip_images: bool,
+    /// 路径 A 进阶 + 路径 C 进阶：per-model 图片能力 map。
+    /// JSON map，键为目标模型名，值为 `true`（支持图片）/ `false`（纯文本）。
+    /// 命中时覆盖 `stripImages` 全局值；未命中时，map 非空则默认 `true`（支持图片），
+    /// map 为空才回落到 `!strip_images`。这让视觉模型与纯文本模型在同一中转共存，
+    /// 避免 stripImages=true 误伤未列出的视觉模型。
+    /// 例：`{"deepseek-v4-pro": false, "gpt-5.5": true}`
+    #[serde(
+        rename = "modelImageSupport",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub model_image_support: String,
+    /// per-model 推理能力 map。JSON map，键为模型名，值为 `true`（支持 reasoning）/ `false`（不支持）。
+    /// Responses 透传时，不支持 reasoning 的模型会被剥除 `reasoning` 字段，避免上游报
+    /// "reasoning is not supported by current model"。未命中默认 `true`（不误伤推理模型）。
+    /// 无 profile 级全局开关，避免和 stripImages 一样的「全局开关压过 per-model」冲突。
+    /// 例：`{"kimi-k2.6": false}`
+    #[serde(
+        rename = "modelReasoningSupport",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub model_reasoning_support: String,
     #[serde(
         rename = "userAgent",
         default,
@@ -154,6 +177,8 @@ impl Default for RelayProfile {
             model_list: String::new(),
             model_windows: String::new(),
             strip_images: false,
+            model_image_support: String::new(),
+            model_reasoning_support: String::new(),
             user_agent: String::new(),
         }
     }
@@ -323,6 +348,76 @@ pub struct BackendSettings {
     pub active_aggregate_relay_id: String,
     #[serde(rename = "relayTestModel", default = "default_relay_test_model")]
     pub relay_test_model: String,
+    /// 路径 B1：内嵌 VL（视觉语言）中转配置。
+    /// 开启后，纯文本模型请求中的 `input_image` 会被调 VL API 翻译成文字描述，
+    /// 替换为 `input_text` 后再走协议转换；VL 不可用时降级为 strip。
+    /// 默认 disabled，避免给未配置 VL 的用户造成额外网络请求。
+    #[serde(rename = "visionRelay", default)]
+    pub vision_relay: VisionRelayConfig,
+}
+
+/// 路径 B1：视觉语言模型中转配置（OpenAI 兼容 Chat Completions 接口）。
+/// 与 RelayProfile 独立，因为 VL 模型是「跨供应商共享的能力服务」，
+/// 同一份 base_url/api_key/model 可服务多个中转的纯文本模型。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisionRelayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// VL 模型名，如 `qwen-vl-plus`、`kimi-2.6`、`gpt-4o-mini`。
+    /// 调用方把 `input_image` 作为图片 content 块发给此模型。
+    #[serde(default)]
+    pub model: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
+    /// 端点根 URL（不含尾部路径），配合 `protocol` 拼接出最终 endpoint：
+    /// - `ChatCompletions`：拼 `/chat/completions`
+    /// - `Responses`：拼 `/responses`
+    /// 如 `https://dashscope.aliyuncs.com/compatible-mode/v1`。
+    #[serde(rename = "baseUrl", default, skip_serializing_if = "String::is_empty")]
+    pub base_url: String,
+    /// VL 上游协议。复用 `RelayProtocol` 枚举：
+    /// - `ChatCompletions`（默认）：OpenAI 兼容 Chat Completions（messages + content 数组）
+    /// - `Responses`：OpenAI Responses API（input 数组 + content parts）
+    /// 与 RelayProfile 的 protocol 字段语义、序列化格式完全一致。
+    #[serde(default = "default_vision_relay_protocol")]
+    pub protocol: RelayProtocol,
+    /// VL 回复的最大 token 数。控制 VL 模型描述图片的详细程度。
+    /// 默认 256（1-2 句简述）；调大（512/1024）可获得更详细的描述。
+    #[serde(default = "default_vl_max_tokens")]
+    pub max_tokens: u32,
+    /// VL 上下文窗口（token 数）。控制往回找多远的图片做 VL 描述。
+    /// 0 = 不限制（处理所有图片，向后兼容）。设为如 50000 时，超出窗口的老图直接丢弃不调 VL。
+    /// 只影响 VL 处理范围，不影响主对话的压缩阈值。
+    #[serde(default)]
+    pub context_window: u64,
+}
+
+impl Default for VisionRelayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: String::new(),
+            api_key: String::new(),
+            base_url: String::new(),
+            // 默认 Chat Completions：旧 settings.json 不带 protocol 字段时
+            // 反序列化得到的也是 ChatCompletions，向后兼容
+            protocol: RelayProtocol::ChatCompletions,
+            max_tokens: default_vl_max_tokens(),
+            context_window: 0,
+        }
+    }
+}
+
+/// VL 协议 serde 默认值。不能用 `Default` trait（RelayProtocol 默认是 Responses），
+/// 需显式返回 ChatCompletions 以保持旧配置向后兼容。
+fn default_vision_relay_protocol() -> RelayProtocol {
+    RelayProtocol::ChatCompletions
+}
+
+/// VL 回复 max_tokens 的 serde 默认值。256 兼顾简洁与信息量，向后兼容旧配置。
+fn default_vl_max_tokens() -> u32 {
+    256
 }
 
 impl Default for BackendSettings {
@@ -382,6 +477,7 @@ impl Default for BackendSettings {
             aggregate_relay_profiles: Vec::new(),
             active_aggregate_relay_id: String::new(),
             relay_test_model: default_relay_test_model(),
+            vision_relay: VisionRelayConfig::default(),
         }
     }
 }
@@ -423,6 +519,8 @@ impl BackendSettings {
                 model_list: String::new(),
                 model_windows: String::new(),
                 strip_images: false,
+                model_image_support: String::new(),
+                model_reasoning_support: String::new(),
                 user_agent: String::new(),
             };
         }
@@ -469,6 +567,8 @@ impl BackendSettings {
             model_list: String::new(),
             model_windows: String::new(),
             strip_images: false,
+            model_image_support: String::new(),
+            model_reasoning_support: String::new(),
             user_agent: String::new(),
         }
     }
@@ -2176,5 +2276,134 @@ experimental_bearer_token = "sk-existing""#
         // 验证能正确序列化回 stripImages
         let serialized = serde_json::to_string(&profile).unwrap();
         assert!(serialized.contains("\"stripImages\":true"));
+    }
+
+    #[test]
+    fn relay_profile_default_model_image_support_is_empty() {
+        // 路径 A 进阶默认值：modelImageSupport 默认空字符串（无 per-model 配置）
+        let profile = RelayProfile::default();
+        assert_eq!(profile.model_image_support, "");
+    }
+
+    #[test]
+    fn relay_profile_roundtrips_model_image_support_field() {
+        // 验证 modelImageSupport 字段能正确反序列化（前端用 modelImageSupport 命名）
+        let json = r#"{"id":"r1","name":"测试","modelImageSupport":"{\"deepseek-v4-pro\":false}"}"#;
+        let profile: RelayProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.model_image_support, r#"{"deepseek-v4-pro":false}"#);
+
+        // 验证能正确序列化回 modelImageSupport
+        let serialized = serde_json::to_string(&profile).unwrap();
+        assert!(serialized.contains("modelImageSupport"));
+    }
+
+    // ======================================================================
+    // 路径 B1：VisionRelayConfig — 内嵌 VL 中转配置
+    //
+    // spec 第四章路径 B1：把视觉模型 API 配进 BackendSettings 全局，
+    // 上游纯文本模型请求中遇到 input_image 时调 VL API 拿文字描述，
+    // 替换为 input_text 后再走原有协议转换链路。
+    // ======================================================================
+
+    #[test]
+    fn vision_relay_config_defaults_are_disabled() {
+        // spec：默认关闭，避免给没配 VL 的用户造成额外网络请求
+        let config = VisionRelayConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.model, "");
+        assert_eq!(config.api_key, "");
+        assert_eq!(config.base_url, "");
+    }
+
+    #[test]
+    fn vision_relay_config_roundtrips_through_json() {
+        // camelCase 字段名与前端保持一致
+        let json = r#"{"enabled":true,"model":"qwen-vl-plus","apiKey":"sk-test","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1"}"#;
+        let config: VisionRelayConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.model, "qwen-vl-plus");
+        assert_eq!(config.api_key, "sk-test");
+        assert_eq!(
+            config.base_url,
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        );
+
+        // 序列化回 camelCase
+        let serialized = serde_json::to_string(&config).unwrap();
+        assert!(serialized.contains("\"enabled\":true"));
+        assert!(serialized.contains("\"model\":\"qwen-vl-plus\""));
+        assert!(serialized.contains("\"apiKey\":\"sk-test\""));
+        assert!(serialized.contains("\"baseUrl\""));
+    }
+
+    #[test]
+    fn backend_settings_default_vision_relay_is_disabled() {
+        // BackendSettings 默认值：vision_relay 字段为禁用配置
+        let settings = BackendSettings::default();
+        assert!(!settings.vision_relay.enabled);
+    }
+
+    #[test]
+    fn backend_settings_roundtrips_vision_relay_field() {
+        // 验证 visionRelay 字段能正确反序列化（前端用 visionRelay 命名）
+        let json = r#"{"visionRelay":{"enabled":true,"model":"qwen-vl-plus","apiKey":"sk-test","baseUrl":"https://x.com/v1"}}"#;
+        let settings: BackendSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.vision_relay.enabled);
+        assert_eq!(settings.vision_relay.model, "qwen-vl-plus");
+
+        // 验证序列化保留 visionRelay
+        let serialized = serde_json::to_string(&settings).unwrap();
+        assert!(serialized.contains("visionRelay"));
+    }
+
+    #[test]
+    fn backend_settings_legacy_json_without_vision_relay_loads_with_disabled_default() {
+        // 旧 settings.json 没有 visionRelay 字段时，反序列化应得默认（disabled）配置
+        // 不能 panic，不能要求用户重新配置
+        let json = r#"{"codexAppPath":"/usr/bin/codex"}"#;
+        let settings: BackendSettings = serde_json::from_str(json).unwrap();
+        assert!(!settings.vision_relay.enabled);
+        assert_eq!(settings.vision_relay.model, "");
+    }
+
+    #[test]
+    fn vision_relay_config_default_protocol_is_chat_completions() {
+        // 默认 Chat Completions：旧 settings.json 不带 protocol 字段时
+        // 反序列化得到的也是 ChatCompletions，向后兼容。
+        let config = VisionRelayConfig::default();
+        assert_eq!(config.protocol, RelayProtocol::ChatCompletions);
+    }
+
+    #[test]
+    fn vision_relay_config_roundtrips_protocol_field() {
+        // protocol 字段与 RelayProfile 共享枚举，camelCase 序列化
+        let json_responses = r#"{"enabled":true,"model":"qwen-vl-plus","protocol":"responses"}"#;
+        let cfg: VisionRelayConfig = serde_json::from_str(json_responses).unwrap();
+        assert_eq!(cfg.protocol, RelayProtocol::Responses);
+
+        let json_chat = r#"{"enabled":true,"model":"qwen-vl-plus","protocol":"chatCompletions"}"#;
+        let cfg: VisionRelayConfig = serde_json::from_str(json_chat).unwrap();
+        assert_eq!(cfg.protocol, RelayProtocol::ChatCompletions);
+
+        // 序列化回 camelCase
+        let cfg = VisionRelayConfig {
+            enabled: true,
+            model: "qwen-vl-plus".to_string(),
+            api_key: "".to_string(),
+            base_url: "".to_string(),
+            protocol: RelayProtocol::Responses,
+            max_tokens: 256,
+            context_window: 0,
+        };
+        let serialized = serde_json::to_string(&cfg).unwrap();
+        assert!(serialized.contains("\"protocol\":\"responses\""));
+    }
+
+    #[test]
+    fn vision_relay_config_legacy_json_without_protocol_defaults_to_chat_completions() {
+        // 旧 settings.json 没有 protocol 字段时，反序列化应为 ChatCompletions
+        let json = r#"{"enabled":true,"model":"qwen-vl-plus"}"#;
+        let cfg: VisionRelayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.protocol, RelayProtocol::ChatCompletions);
     }
 }

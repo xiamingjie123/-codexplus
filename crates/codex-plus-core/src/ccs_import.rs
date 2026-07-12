@@ -100,6 +100,8 @@ pub fn relay_profile_from_ccs(
         model_list: String::new(),
         model_windows: String::new(),
         strip_images: false,
+        model_image_support: String::new(),
+        model_reasoning_support: String::new(),
         user_agent: String::new(),
     }
 }

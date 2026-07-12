@@ -182,6 +182,22 @@ type BackendSettings = {
   relayContextConfigContents: string;
   activeRelayId: string;
   relayTestModel: string;
+  /// 路径 B1：视觉模型中转配置（VL API）。
+  /// 纯文本模型请求中遇到图片时，Codex++ 会调这个 API 拿文字描述。
+  visionRelay: {
+    enabled: boolean;
+    model: string;
+    apiKey: string;
+    baseUrl: string;
+    /// 上游 VL API 协议。复用 RelayProfile 的协议枚举：
+    /// - "chatCompletions"（默认）：OpenAI 兼容 Chat Completions
+    /// - "responses"：OpenAI Responses API
+    protocol: RelayProtocol;
+    /// VL 回复的最大 token 数，控制描述详细程度。默认 256。
+    maxTokens: number;
+    /// VL 上下文窗口（token）。超出窗口的老图直接丢弃不调 VL。0=不限制。
+    contextWindow: number;
+  };
 };
 
 type ZedOpenStrategy = "addToFocusedWorkspace" | "reuseWindow" | "newWindow" | "default";
@@ -211,6 +227,11 @@ export type RelayProfile = {
   // 路径 A：开启后从 Responses 转 Chat Completions 时静默丢弃 input_image，
   // 适用于 DeepSeek/GLM/Kimi 等纯文本模型。默认 false（保留多模态行为）。
   stripImages: boolean;
+  /// 路径 A 进阶 + 路径 C 进阶：per-model 图片能力 JSON map。
+  /// 仅存 `false`（纯文本）条目；`true` 是默认行为，从 map 中省略。
+  /// 例：`{"deepseek-v4-pro":false,"glm-5.2":false}`
+  modelImageSupport: string;
+  modelReasoningSupport: string;
   userAgent: string;
   aggregate?: RelayAggregateConfig | null;
 };
@@ -722,6 +743,8 @@ const defaultSettings: BackendSettings = {
       modelList: "",
       modelWindows: "",
       stripImages: false,
+      modelImageSupport: "",
+      modelReasoningSupport: "",
       userAgent: "",
     },
   ],
@@ -731,6 +754,7 @@ const defaultSettings: BackendSettings = {
   aggregateRelayProfiles: [],
   activeAggregateRelayId: "",
   relayTestModel: "gpt-5.4-mini",
+  visionRelay: { enabled: false, model: "", apiKey: "", baseUrl: "", protocol: "chatCompletions", maxTokens: 256, contextWindow: 0 },
 };
 
 export function App() {
@@ -3423,6 +3447,91 @@ function SettingsScreen({
               placeholder={t("例如 gpt-5.4-mini")}
             />
           </Field>
+          <div className="settings-block vision-relay-settings-block">
+            <div className="section-title">{t("视觉模型中转（VL）")}</div>
+            <p className="field-hint">
+              {t("纯文本模型（如 DeepSeek-V4/GLM-5.2等）默认不识别图片。开启后，Codex++ 会先调此处配置的视觉模型 API 把图片翻译为文字，再交给纯文本模型；VL 不可用时自动降级为丢弃图片。")}
+              {t("上下文窗口控制往回找多远的图片做 VL 描述：超出窗口的老图直接丢弃不调 VL，省成本；0 表示不限制。此设置只影响 VL 处理范围，不影响主对话的压缩阈值。")}
+            </p>
+            <label className="switch-row">
+              <input
+                checked={form.visionRelay.enabled}
+                onChange={(event) => onFormChange({ ...form, visionRelay: { ...form.visionRelay, enabled: event.currentTarget.checked } })}
+                type="checkbox"
+              />
+              <span>
+                <strong>{t("启用视觉模型中转")}</strong>
+                <span className="field-hint">{t("关闭时，纯文本模型（模型列表里勾选「只支持文本」的）会丢弃图片，视觉模型保留原图")}</span>
+              </span>
+            </label>
+            <Field label={t("上游协议")}>
+              <div className="protocol-options">
+                <button
+                  className={`protocol-option ${form.visionRelay.protocol === "responses" ? "active" : ""}`}
+                  disabled={!form.visionRelay.enabled}
+                  onClick={() => onFormChange({ ...form, visionRelay: { ...form.visionRelay, protocol: "responses" } })}
+                  type="button"
+                >
+                  Responses API
+                </button>
+                <button
+                  className={`protocol-option ${form.visionRelay.protocol === "chatCompletions" ? "active" : ""}`}
+                  disabled={!form.visionRelay.enabled}
+                  onClick={() => onFormChange({ ...form, visionRelay: { ...form.visionRelay, protocol: "chatCompletions" } })}
+                  type="button"
+                >
+                  Chat Completions
+                </button>
+              </div>
+            </Field>
+            <div className="form-row">
+              <Field label="Base URL">
+                <Input
+                  disabled={!form.visionRelay.enabled}
+                  onChange={(event) => onFormChange({ ...form, visionRelay: { ...form.visionRelay, baseUrl: event.currentTarget.value } })}
+                  placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                  value={form.visionRelay.baseUrl}
+                />
+              </Field>
+              <Field label="Model">
+                <Input
+                  disabled={!form.visionRelay.enabled}
+                  onChange={(event) => onFormChange({ ...form, visionRelay: { ...form.visionRelay, model: event.currentTarget.value } })}
+                  placeholder={t("例如 qwen-vl-plus / kimi-2.6 / gpt-4o-mini")}
+                  value={form.visionRelay.model}
+                />
+              </Field>
+            </div>
+            <Field label="API Key">
+              <Input
+                disabled={!form.visionRelay.enabled}
+                onChange={(event) => onFormChange({ ...form, visionRelay: { ...form.visionRelay, apiKey: event.currentTarget.value } })}
+                type="password"
+                value={form.visionRelay.apiKey}
+              />
+            </Field>
+            <Field label={t("最大回复 token")}>
+              <Input
+                disabled={!form.visionRelay.enabled}
+                onChange={(event) => onFormChange({ ...form, visionRelay: { ...form.visionRelay, maxTokens: Number(event.currentTarget.value.replace(/[^\d]/g, "")) || 256 } })}
+                placeholder="256"
+                type="number"
+                value={form.visionRelay.maxTokens}
+              />
+            </Field>
+            <Field label={t("上下文窗口（token）")}>
+              <Input
+                disabled={!form.visionRelay.enabled}
+                onChange={(event) => onFormChange({ ...form, visionRelay: { ...form.visionRelay, contextWindow: Number(event.currentTarget.value.replace(/[^\d]/g, "")) } })}
+                placeholder="留空不限制"
+                type="number"
+                value={form.visionRelay.contextWindow || ""}
+              />
+            </Field>
+            <div className="form-actions">
+              <Button onClick={() => void actions.saveSettingsValue(form, false)}>{t("保存")}</Button>
+            </div>
+          </div>
           <div className="settings-block stepwise-settings-block">
             <div className="section-title">Stepwise</div>
             <div className="stepwise-settings-section">{t("连接")}</div>
@@ -3876,7 +3985,12 @@ function RelayProfileDetail({
 }) {
   const [draft, setDraft] = useState<RelayProfile>(profile);
   const [modelWindowRows, setModelWindowRows] = useState<ModelWindowRow[]>(
-    modelWindowRowsFromProfile(profile.modelList, profile.modelWindows || ""),
+    modelWindowRowsFromProfile(
+      profile.modelList,
+      profile.modelWindows || "",
+      profile.modelImageSupport || "",
+      profile.modelReasoningSupport || "",
+    ),
   );
   const isActive = !isNew && profile.id === form.activeRelayId;
   const profileUsesLiveFiles = relayProfileUsesLiveFiles(profile);
@@ -3893,12 +4007,25 @@ function RelayProfileDetail({
             : profile,
         );
     setDraft(nextDraft);
-    setModelWindowRows(modelWindowRowsFromProfile(nextDraft.modelList, nextDraft.modelWindows || ""));
+    setModelWindowRows(
+      modelWindowRowsFromProfile(
+        nextDraft.modelList,
+        nextDraft.modelWindows || "",
+        nextDraft.modelImageSupport || "",
+        nextDraft.modelReasoningSupport || "",
+      ),
+    );
   }, [profile.id, profile.modelList, profile.modelWindows, profileUsesLiveFiles, isActive, isNew, relayFiles?.configContents, relayFiles?.authContents]);
   const validationError = isAggregateRelayProfile(draft) ? aggregateRelayProfileValidation(draft) : null;
   const draftWithModelRows = () => {
     const serializedRows = serializeModelWindowRows(modelWindowRows);
-    return { ...draft, modelList: serializedRows.modelList, modelWindows: serializedRows.modelWindows };
+    return {
+      ...draft,
+      modelList: serializedRows.modelList,
+      modelWindows: serializedRows.modelWindows,
+      modelImageSupport: serializedRows.modelImageSupport,
+      modelReasoningSupport: serializedRows.modelReasoningSupport,
+    };
   };
   const saveDraft = async () => {
     if (validationError) return;
@@ -4035,7 +4162,7 @@ function RelayProfileEditor({
   };
   const removeModelWindowRow = (index: number) => {
     const nextRows = modelWindowRows.filter((_, rowIndex) => rowIndex !== index);
-    setModelWindowRows(nextRows.length ? nextRows : [{ model: "", window: "" }]);
+    setModelWindowRows(nextRows.length ? nextRows : [{ model: "", window: "", textOnly: false, noReasoning: false }]);
   };
   const addModelWindowRows = (rows: ModelWindowRow[]) => {
     setModelWindowRows(mergeModelWindowRows(modelWindowRows, rows));
@@ -4050,6 +4177,8 @@ function RelayProfileEditor({
         ...profile,
         modelList: serializedRows.modelList,
         modelWindows: serializedRows.modelWindows,
+        modelImageSupport: serializedRows.modelImageSupport,
+      modelReasoningSupport: serializedRows.modelReasoningSupport,
       }),
     );
     setDoctorResult(result);
@@ -4233,6 +4362,8 @@ function RelayProfileEditor({
               <div className="relay-model-row relay-model-row-head">
                 <span>{t("模型名称")}</span>
                 <span>{t("上下文窗口")}</span>
+                <span>{t("只支持文本")}</span>
+                <span>{t("不支持推理")}</span>
                 <span />
               </div>
               {modelWindowRows.map((row, index) => (
@@ -4247,6 +4378,24 @@ function RelayProfileEditor({
                     onChange={(event) => updateModelWindowRow(index, { window: event.currentTarget.value })}
                     placeholder="1M"
                   />
+                  <label className="relay-model-image-support">
+                    <input
+                      checked={row.textOnly}
+                      disabled={!row.model.trim()}
+                      onChange={(event) => updateModelWindowRow(index, { textOnly: event.currentTarget.checked })}
+                      title={t("勾选以标记为纯文本模型（DeepSeek/GLM/Kimi 等），Codex++ 会在转发前静默丢弃 input_image")}
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="relay-model-image-support">
+                    <input
+                      checked={row.noReasoning}
+                      disabled={!row.model.trim()}
+                      onChange={(event) => updateModelWindowRow(index, { noReasoning: event.currentTarget.checked })}
+                      title={t("勾选以标记为不支持 reasoning 的模型（如 kimi-2.6 on Ark），Codex++ 会在透传前剥除 reasoning 字段")}
+                      type="checkbox"
+                    />
+                  </label>
                   <Button
                     aria-label={t("删除模型")}
                     onClick={() => removeModelWindowRow(index)}
@@ -4262,7 +4411,7 @@ function RelayProfileEditor({
             </div>
             <div className="relay-model-list-tools">
               <Button
-                onClick={() => setModelWindowRows([...modelWindowRows, { model: "", window: "" }])}
+                onClick={() => setModelWindowRows([...modelWindowRows, { model: "", window: "", textOnly: false, noReasoning: false }])}
                 size="sm"
                 type="button"
                 variant="secondary"
@@ -4277,9 +4426,11 @@ function RelayProfileEditor({
                     ...profile,
                     modelList: serializedRows.modelList,
                     modelWindows: serializedRows.modelWindows,
+                    modelImageSupport: serializedRows.modelImageSupport,
+                    modelReasoningSupport: serializedRows.modelReasoningSupport,
                   });
                   if (models?.length) {
-                    addModelWindowRows(models.map((model) => ({ model, window: "" })));
+                    addModelWindowRows(models.map((model) => ({ model, window: "", textOnly: false, noReasoning: false })));
                   }
                 }}
                 size="sm"
@@ -4292,6 +4443,8 @@ function RelayProfileEditor({
             </div>
             <p className="field-hint">
               {t("每行一个模型；上下文窗口可填")} <code>1M</code>{t("、")}<code>200K</code> {t("或")} <code>1000000</code>{t("，留空表示使用 Codex 默认长度。")}
+              <br />
+              {t("默认所有模型都是多模态；勾选「只支持文本」可标记为纯文本模型（DeepSeek-V4/GLM-5.2等），Codex++ 会在转发前静默丢弃 input_image。如果在 Codex++ 设置中配置了支持图片输入的模型，input_image 将由该模型解析。")}
             </p>
           </Field>
         ) : null}
@@ -4302,23 +4455,6 @@ function RelayProfileEditor({
               onChange={(event) => updateDraft({ userAgent: event.currentTarget.value })}
               placeholder={t("留空使用默认值")}
             />
-          </Field>
-        ) : null}
-        {showApiFields ? (
-          <Field className="relay-field-strip-images" label={t("图片处理")}>
-            <label className="switch-row">
-              <input
-                checked={profile.stripImages}
-                onChange={(event) => updateDraft({ stripImages: event.currentTarget.checked })}
-                type="checkbox"
-              />
-              <span>
-                <strong>{t("强制移除图片（适用于纯文本模型）")}</strong>
-                <p className="field-hint">
-                  {t("开启后，从 Responses 转 Chat Completions 时静默丢弃 input_image 块，content 自动坍缩为纯文本。可解决 DeepSeek/GLM/Kimi 等纯文本模型遇到用户上传图片或模型自截图时报 unknown variant `image_url` 的问题。")}
-                </p>
-              </span>
-            </label>
           </Field>
         ) : null}
       </div>
@@ -5995,6 +6131,8 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
             modelList: "",
             modelWindows: "",
             stripImages: false,
+            modelImageSupport: "",
+      modelReasoningSupport: "",
             userAgent: "",
           },
         ];
@@ -6009,6 +6147,17 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
     codexAppImageOverlayOpacity: clampNumber(settings.codexAppImageOverlayOpacity || 35, 1, 100),
     codexAppImageOverlayFitMode: normalizeImageOverlayFitMode(settings.codexAppImageOverlayFitMode),
     codexAppStepwiseMaxItems: clampNumber(settings.codexAppStepwiseMaxItems ?? 6, 0, 6),
+    visionRelay: {
+      enabled: settings.visionRelay?.enabled === true,
+      model: settings.visionRelay?.model || "",
+      apiKey: settings.visionRelay?.apiKey || "",
+      baseUrl: settings.visionRelay?.baseUrl || "",
+      // 默认 chatCompletions：旧 settings.json 不带 protocol 字段时
+      // 反序列化得到的也是 ChatCompletions，向后兼容
+      protocol: settings.visionRelay?.protocol || "chatCompletions",
+      maxTokens: settings.visionRelay?.maxTokens || 256,
+      contextWindow: settings.visionRelay?.contextWindow || 0,
+    },
     codexAppStepwiseMaxInputChars: clampNumber(settings.codexAppStepwiseMaxInputChars || 6000, 1000, 24000),
     codexAppStepwiseMaxOutputTokens: clampNumber(settings.codexAppStepwiseMaxOutputTokens || 500, 100, 4000),
     codexAppStepwiseTimeoutMs: clampNumber(settings.codexAppStepwiseTimeoutMs || 8000, 1000, 60000),
@@ -6063,6 +6212,9 @@ function normalizeRelayProfile(profile: RelayProfile, defaultContextSelection = 
         autoCompactLimit: "",
         modelList: "",
         modelWindows: "",
+        stripImages: false,
+        modelImageSupport: "",
+      modelReasoningSupport: "",
       },
       null,
     );
@@ -6091,6 +6243,8 @@ function normalizeRelayProfile(profile: RelayProfile, defaultContextSelection = 
     modelList: profile.modelList || "",
     modelWindows: profile.modelWindows || "",
     stripImages: profile.stripImages ?? false,
+    modelImageSupport: profile.modelImageSupport ?? "",
+    modelReasoningSupport: profile.modelReasoningSupport ?? "",
     userAgent: profile.userAgent || "",
     aggregate: null,
   };
@@ -6728,6 +6882,8 @@ function createRelayProfile(settings: BackendSettings): RelayProfile {
     modelList: "",
     modelWindows: "",
     stripImages: false,
+    modelImageSupport: "",
+      modelReasoningSupport: "",
     userAgent: "",
   };
   return withGeneratedRelayFiles(next);
@@ -6759,6 +6915,8 @@ function createAggregateRelayProfile(settings: BackendSettings): RelayProfile {
       modelList: "",
       modelWindows: "",
       stripImages: false,
+      modelImageSupport: "",
+      modelReasoningSupport: "",
       userAgent: "",
       aggregate: {
         strategy: "failover",

@@ -4,6 +4,8 @@
 > 任务来源：spec `docs/specs/2026-07-09-text-only-model-image-handling-design.md`
 > 关联 issue：#1194（Bug 报错）、#1191（Feature）
 > 实施范围：spec 路径 A + C（MVP）
+> 续补日期：2026-07-12
+> 续补范围：补完路径 A 续（Responses 透传 strip）+ 修两个回归 bug（重启失败、Ark Responses 仍传图）
 
 ---
 
@@ -251,3 +253,232 @@ spec 路径 A + C：✅ 100%
 单元测试：✅ 446 个全通过
 集成测试：⚠️ 未做（需真实 Codex 环境）
 Oracle 审查：✅ UNCONDITIONAL APPROVAL
+
+## 三、2026-07-12 续补：修复两个 bug + 补全 Responses 透传 strip
+
+### 1. 触发的两个 bug
+
+用户实际跑通时遇到：
+
+1. **重启 Codex++ 失败**
+   - 报错：`无法启动 /Users/jarvis/Documents/CodexPlusPlus/target/debug/codex-plus-plus: No such file or directory (os error 2)`
+   - 根因：`tauri dev` / `cargo build -p codex-plus-manager` 只编 manager，不编 launcher；`restart_codex_plus` → `spawn_silent_launcher` → `companion_binary_path("codex-plus-plus")` 找不到兄弟二进制
+   - 修复：`cargo build --bin codex-plus-plus`（或 `cargo build` 编整个 workspace）补齐 launcher；CI 已用 `cargo build --release` 编全部，本地 dev 需注意
+   - **不改代码**——这是 dev workflow 缺脚本，spec 路径 A 的代码本身正确
+
+2. **Ark (Responses API) 纯文本模型仍报 "Model do not support image input"**
+   - 根因：spec 第八章已知限制——`upstream_request_parts` 的 `RelayProtocol::Responses` 分支走透传，不经过 `responses_to_chat_completions_with_image_support`，input_image 原样转发到 Ark 上游
+   - 修复：新增 `strip_input_images_in_place(body, supports_image)` 原地移除 `input` 数组里的 `input_image` 块，在 `RelayProtocol::Responses` 分支调用（spec 路径 A 续）
+
+### 2. 实施（按 TDD）
+
+#### 2a. RED：5 个失败测试
+
+新增 5 个测试覆盖 Responses 透传分支的 strip 行为：
+
+```
+1. responses_passthrough_preserves_input_image_for_multimodal_model
+   → supports_image=true 保留所有 input_image
+2. responses_passthrough_strips_input_image_for_text_only_model
+   → supports_image=false 移除 input_image，content 保持数组（仅剩 input_text）
+3. responses_passthrough_keeps_other_part_types_intact
+   → input_text/output_text/refusal 都保留，只剥 input_image
+4. responses_passthrough_handles_string_input_and_content_gracefully
+   → input 是字符串 / content 是字符串时为 no-op
+5. responses_passthrough_strips_image_only_message_leaves_empty_array
+   → 整条消息只有图片，strip 后 content = []（Responses API 允许）
+```
+
+#### 2b. GREEN：最小实现
+
+`protocol_proxy.rs` 新增 `pub fn strip_input_images_in_place(body: &mut Value, supports_image: bool)`，在 `upstream_request_parts` 的 `RelayProtocol::Responses` 分支调用：
+
+```rust
+RelayProtocol::Responses => {
+    let mut body = request_json;
+    strip_input_images_in_place(&mut body, supports_image);
+    Ok((responses_url(&relay.base_url), body, UpstreamWireApi::Responses))
+}
+```
+
+实现要点（已含 doc 注释）：
+- 仅剥 `type == "input_image"` 的 part，其他 part 原样保留
+- `input` 是字符串、或 `content` 是字符串时为 no-op
+- 不处理 `instructions`（Responses API 中 instructions 始终为字符串）
+- 整条消息被剥空时，content 数组保持为空（Responses API 允许空 content，不强行坍缩成字符串——那是 ChatCompletions 转换的逻辑）
+
+### 3. 验证
+
+| 套件 | 通过/总数 | 备注 |
+|------|----------|------|
+| `cargo test --test protocol_proxy` | 55/55 | 含 5 个新增（响应透传 strip） |
+| `cargo test --workspace --lib` | 30/30 | 回归通过 |
+| `cargo fmt --check` | 通过 | 格式干净 |
+| 启动 launcher 二进制 | 通过 | `cargo build --bin codex-plus-plus` 后 `target/debug/codex-plus-plus` 可执行 |
+
+`watcher::codex_process_filter_keeps_chatgpt_desktop_package_processes` 1 个 pre-existing 失败已用 `git stash` 验证与本次改动无关。
+
+### 4. spec 覆盖更新
+
+| spec 路径 | 第一次（7-10） | 续补后（7-12） | 对应 Issue |
+|-----------|--------------|---------------|-----------|
+| 路径 A 后端签名链路 | ✅ 100% | ✅ 100% | Bug 2 |
+| 路径 A Responses 透传 strip | ❌ 未做 | ✅ 已补 | Bug 2 |
+| 路径 A 配置（profile 级 strip_images） | ✅ 100% | ✅ 100% | — |
+| 路径 A 进阶（per-model map） | ⏸ 未做 | ⏸ 未做 | Issue 4 进阶 |
+| 路径 B VL 中转（B1 内嵌/B2 外部网关/B3 插件） | ⏸ 未做 | ⏸ 未做 | Issue 3 |
+| 路径 C UI 标记（profile 级 checkbox） | ✅ 100% | ✅ 100% | — |
+| 路径 C 进阶（modelWindowRows 加「图片支持」列） | ⏸ 未做 | ⏸ 未做 | Issue 4 进阶 |
+
+### 5. 与 Issue 3、4 的关系
+
+用户提的剩下两个需求对应：
+
+- **Issue 3**：「需要单独配一个 API 接口给视觉模型」 → spec 路径 B（VL 中转）
+  - spec 第七章明确列为「再做 B1」，execution log 第一次就写「**不做**：路径 B」
+  - B1 内嵌工作量约 4-6 天（流式 + 错误降级），B2 外部网关（B 半天）适合快速验证
+  - 选 B2 还是 B1 需用户决策
+
+- **Issue 4**：「模型配置界面里没写哪个是纯文本模型，哪个是文图模型」 → spec 路径 C 进阶
+  - 当前 `ModelWindowRow` 只有 `{ model, window }` 两个字段，无 imageSupport
+  - 工作量约 0.5-1 天：加 `imageSupport: boolean` 字段、`modelImageSupport: String` JSON map（复用 `model_windows` 模式）、表格加一列复选框、`model_supports_image` 改为查 map（未配置默认 true）
+  - 可在路径 A 进阶一并做
+
+### 6. 验收
+
+- 路径 A 全覆盖：✅ ChatCompletions + Responses 透传都 strip
+- profile 级 stripImages UI：✅ 已有
+- per-model 图片能力：⏸ 留待 Issue 4 进阶
+- VL 中转：⏸ 留待 Issue 3
+- dev workflow：launcher 二进制需手动 `cargo build --bin codex-plus-plus` 补齐，建议加 Makefile 或 `scripts/dev.sh`（待用户决定）
+
+## 四、2026-07-12 续补 2：reasoning strip + stripImages/map 冲突修复 + 大小写不敏感匹配
+
+### 1. 触发：用户实测报 4 个问题
+
+用户在 Ark（Responses 透传）和讯飞（ChatCompletions）上实测，报：
+
+1. **kimi-2.6 报 "reasoning is not supported by current model"**：Codex 默认在 Responses 请求带 `reasoning` 字段，透传路径不处理 -> Ark 的 kimi 端点拒绝。预存问题，用户要求顺手修。
+2. **stripImages=true + 非空 per-model map 时，视觉模型被误 strip**：用户在 cherry 中转配了 `modelImageSupport: {"deepseek-v4-flash":false,"glm-5.2":false}` 且 `stripImages=true`，kimi-2.6（不在 map）被 fallback `!strip_images=true` -> `false` -> 误 strip。取消 `stripImages` 后才正常。用户反馈两配置「重复且冲突」。
+3. **GLM 5.2 仍收图片**：疑似模型名大小写不匹配（map key `glm-5.2` vs Codex 发送的 `GLM-5.2`），case-sensitive lookup 未命中。
+4. **讯飞 401**：用户切到正确 API key 后已自行解决（非代码问题）。
+
+### 2. 修复（按 TDD：先写失败测试 -> 实现 -> 验证）
+
+#### 2a. reasoning strip（per-model，Responses 透传）
+
+- `settings.rs` `RelayProfile` 新增 `model_reasoning_support: String`（JSON map，同 `model_image_support` serde 模式）
+- `protocol_proxy.rs` 新增 `model_supports_reasoning(relay, model)`：map 命中 -> 用 map 值；未命中 -> 默认 `true`（不误伤推理模型）。**无 profile 级全局开关**，避免和 stripImages 一样的冲突
+- 新增 `strip_reasoning_in_place(body, supports_reasoning)`：`false` 时移除 `body["reasoning"]`
+- `upstream_request_parts_with_image_decision` 改 `pub`，Responses 分支在 `strip_input_images_in_place` 后调 `strip_reasoning_in_place`（ChatCompletions 分支不动，已有 `apply_chat_reasoning_options` 转换）
+- 前端 per-model 表格加「不支持推理」复选框列（`noReasoning` field -> `modelReasoningSupport` map）
+
+#### 2b. stripImages/map 冲突修复（map 非空时为唯一权威）
+
+`model_supports_image` fallback 改为：
+- map 命中 -> 用 map 值
+- map 未命中 + **map 有效且非空** -> 默认 `true`（支持图片，让视觉模型与纯文本模型共存）
+- map 未命中 + map 空/非法 JSON -> 回落 `!strip_images`（MVP 行为，向后兼容）
+
+新增 `model_bool_map_is_valid_and_nonempty` helper 判断 map 是否为有效非空 JSON（避免 `"not json"` 字符串被误判为「map 在用」）。
+
+#### 2c. 大小写不敏感匹配
+
+`lookup_model_image_support` 重命名为 `lookup_model_bool_support`（generic，image + reasoning 共用），改为 case-insensitive：`model.to_ascii_lowercase()` 比较。解决 map key `GLM-5.2` vs Codex 发 `glm-5.2` 不匹配问题。
+
+### 3. 验证
+
+| 套件 | 通过/总数 | 备注 |
+|------|----------|------|
+| `cargo test --test protocol_proxy` | **78/78** | 含 6 个新增（reasoning strip + case-insensitive + map-authoritative）+ 2 个改写（fallback 行为变更） |
+| `cargo test --test relay_config` | 93/93 | 回归通过 |
+| `cargo test --test launcher` | 60/60 | 回归通过 |
+| `cargo test --workspace` | 全通过（1 个 pre-existing `codex_process_filter` 失败，与本次无关） | - |
+| `npx tsx --test src/model-windows.test.ts` | **18/18** | 含 3 个新增 noReasoning 测试 |
+| `npx tsc --noEmit` | 0 errors | - |
+| `npx vite build` | 成功 | - |
+| `cargo fmt --check` | 通过 | - |
+| `cargo build --bin codex-plus-plus --bin codex-plus-plus-manager` | 成功 | 两个 binary 都已构建 |
+
+### 4. spec 覆盖更新
+
+| 能力 | 状态 |
+|------|------|
+| per-model 图片能力（modelImageSupport） | ✅ 已有，修复了与 stripImages 的冲突 + 大小写不敏感 |
+| per-model 推理能力（modelReasoningSupport） | ✅ 新增 |
+| Responses 透传剥 reasoning | ✅ 新增 |
+| ChatCompletions reasoning 转换 | ✅ 已有（apply_chat_reasoning_options） |
+
+### 5. 改动文件
+
+```
+crates/codex-plus-core/src/settings.rs           | +18 (model_reasoning_support 字段 + 5 处字面量初始化)
+crates/codex-plus-core/src/protocol_proxy.rs     | +60 (model_supports_reasoning + strip_reasoning_in_place + lookup 改 case-insensitive + map-authoritative fallback + upstream 改 pub)
+crates/codex-plus-core/tests/protocol_proxy.rs   | +130 (8 个新测试 + 2 个改写)
+crates/codex-plus-core/tests/launcher.rs         |  +1 (字面量补字段)
+crates/codex-plus-core/src/ccs_import.rs         |  +1 (字面量补字段)
+crates/codex-plus-core/src/provider_import.rs    |  +1 (字面量补字段)
+apps/codex-plus-manager/src/model-windows.ts     | +25 (noReasoning field + helpers)
+apps/codex-plus-manager/src/model-windows.test.ts| +30 (3 个新测试 + 行字面量补字段)
+apps/codex-plus-manager/src/App.tsx              | +20 (RelayProfile 类型 + 表格列 + 字段串接)
+apps/codex-plus-manager/src/styles.css           |  +1 (grid 加第 5 列)
+```
+
+### 6. 用户需做的验证
+
+1. 重启 Codex++（binary 已构建，`bash scripts/dev.sh` 或直接跑）
+2. 中转编辑器 -> 模型列表表格 -> 给 kimi-2.6 勾选「不支持推理」
+3. 测 kimi-2.6：带 reasoning 的请求不再报 "reasoning is not supported"
+4. 确认 GLM 5.2（勾选「只支持文本」）图片被正确 strip（大小写不敏感后应稳定）
+5. 确认视觉模型（minimax-m3 / kimi-2.6 未勾「只支持文本」）在 stripImages=true + 非空 map 时仍能收图
+
+
+## 五、2026-07-12 续补 3：VL 带问题识图 + max_tokens 可配
+
+### 1. 触发：用户反馈 VL 描述不够精准
+
+用户反馈：VL 中转能识别图片大意，但具体细节会说错。根因：VL 发给视觉模型的是**固定提示词**（"请用 1-2 句中文简要描述这张图片的内容"），没有转发用户提问的文字。VL 模型不知道用户想了解什么，只能给泛泛描述。
+
+### 2. 修复
+
+#### 2a. VL 转发用户提问文字（带问题识图）
+
+- `analyze_images_with_vl`（`protocol_proxy.rs`）：遍历每条消息的 `content` 时，收集同一条消息里的 `input_text` 文字，传给 `describe_image_with_vl`
+- `describe_image_with_vl` 新增 `user_text: &str` 参数：
+  - 有用户文字 -> prompt = `"用户想了解：{text}\n请根据图片详细描述与用户问题相关的内容，包括文字、UI 元素、错误信息等。用中文回复。"`
+  - 无用户文字 -> 退回固定提示词（向后兼容）
+- 效果：VL 模型带着用户的问题识图，描述聚焦于用户关心的细节
+
+#### 2b. VL max_tokens 可配（替代硬编码 256）
+
+- `VisionRelayConfig` 新增 `max_tokens: u32`（serde 默认 256，向后兼容旧 settings.json）
+- `describe_image_with_vl` 用 `config.max_tokens` 替代硬编码 256
+- 前端 VL 设置页加「最大回复 token」数字输入框（默认 256）
+- 调大（512/1024）可获得更详细的 VL 描述
+
+### 3. 验证
+
+| 套件 | 通过/总数 | 备注 |
+|------|----------|------|
+| `cargo test --test protocol_proxy` | **81/81** | +3 新测试（带问题识图 / max_tokens 可配 / 无文字退回固定提示词）+ 1 改写（已有测试加 user_text 转发断言） |
+| `cargo test --lib vision_relay` | 8/8 | settings serde 回归 |
+| relay_config / launcher | 93/93、60/60 | 回归通过 |
+| `npx tsx --test src/model-windows.test.ts` | 18/18 | 前端回归 |
+| tsc / vite build / cargo fmt | 全干净 | - |
+| 两 binary build | 成功 | - |
+
+### 4. 改动文件
+
+```
+crates/codex-plus-core/src/settings.rs           | +12 (VisionRelayConfig.max_tokens + default_vl_max_tokens + Default impl)
+crates/codex-plus-core/src/protocol_proxy.rs     | +20 (describe_image_with_vl 加 user_text/max_tokens 参数 + prompt 构造 + analyze 收集 input_text)
+crates/codex-plus-core/tests/protocol_proxy.rs   | +90 (3 新测试 + 1 改写 + 4 处字面量补 max_tokens)
+apps/codex-plus-manager/src/App.tsx              | +12 (visionRelay.maxTokens 类型 + 默认 + 加载 + UI 输入框)
+```
+
+### 5. 用户需做的验证
+
+1. 重启 Codex++（binary 已构建）
+2. 设置页 -> 视觉模型中转 -> 「最大回复 token」可调（默认 256，想详细可调 512/1024）
+3. 给纯文本模型发图 + 提问（如"这个错误是什么？"）-> VL 模型应带着问题识图，描述更精准
+4. 纯发图无文字 -> 退回通用描述（不崩）
