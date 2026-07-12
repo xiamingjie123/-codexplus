@@ -3594,6 +3594,7 @@ function SettingsScreen({
               </span>
             </label>
             <Field label={t("上游协议")}>
+              <span className="field-hint">{t("VL 模型自身的 API 协议，与主中转协议无关；仅 Chat Completions 格式的请求会触发 VL 处理")}</span>
               <div className="protocol-options">
                 <button
                   className={`protocol-option ${form.visionRelay.protocol === "responses" ? "active" : ""}`}
