@@ -3451,7 +3451,7 @@ function SettingsScreen({
             <div className="section-title">{t("视觉模型中转（VL）")}</div>
             <p className="field-hint">
               {t("纯文本模型（如 DeepSeek-V4/GLM-5.2等）默认不识别图片。开启后，Codex++ 会先调此处配置的视觉模型 API 把图片翻译为文字，再交给纯文本模型；VL 不可用时自动降级为丢弃图片。")}
-              {t("上下文窗口控制往回找多远的图片做 VL 描述：超出窗口的老图直接丢弃不调 VL，省成本；0 表示不限制。此设置只影响 VL 处理范围，不影响主对话的压缩阈值。")}
+              {t("上下文窗口特指调用视觉模型的窗口长度，窗口范围内的图片及文字整体发给视觉模型调用 VL；0 表示不限制。此设置只影响 VL 处理范围，不影响主对话的压缩阈值。")}
             </p>
             <label className="switch-row">
               <input
@@ -4444,7 +4444,7 @@ function RelayProfileEditor({
             <p className="field-hint">
               {t("每行一个模型；上下文窗口可填")} <code>1M</code>{t("、")}<code>200K</code> {t("或")} <code>1000000</code>{t("，留空表示使用 Codex 默认长度。")}
               <br />
-              {t("默认所有模型都是多模态；勾选「只支持文本」可标记为纯文本模型（DeepSeek-V4/GLM-5.2等），Codex++ 会在转发前静默丢弃 input_image。如果在 Codex++ 设置中配置了支持图片输入的模型，input_image 将由该模型解析。")}
+              {t("以下仅在选择 Chat Completions 协议时生效：勾选「只支持文本」可标记为纯文本模型（DeepSeek-V4/GLM-5.2等），Codex++ 会在转发前静默丢弃 input_image；务必同时在 Codex++ 设置中配置支持图片输入的模型，input_image 将由该模型解析。")}
             </p>
           </Field>
         ) : null}
