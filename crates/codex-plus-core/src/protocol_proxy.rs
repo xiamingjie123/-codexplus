@@ -527,8 +527,16 @@ async fn open_responses_proxy_request_with_settings_and_user_agent(
     let relay_count = relays.len();
     for (attempt, relay) in relays.into_iter().enumerate() {
         validate_upstream(&relay)?;
+        let upstream_user_agent = effective_user_agent(&relay.user_agent, original_user_agent);
+        let (supports_image, body_with_vl) = apply_vl_with_fallback(
+            &relay,
+            request_json.clone(),
+            &settings.vision_relay,
+            &upstream_user_agent,
+        )
+        .await?;
         let (endpoint, upstream_body, wire_api) =
-            upstream_request_parts(&relay, request_json.clone())?;
+            upstream_request_parts(&relay, body_with_vl, supports_image)?;
         let has_more_candidates = attempt + 1 < relay_count;
         let header_timeout = response_header_timeout(is_stream);
         let _ = crate::diagnostic_log::append_diagnostic_log(
@@ -744,27 +752,47 @@ fn response_header_timeout(is_stream: bool) -> Duration {
     }
 }
 
+/// 构建上游请求。supports_image 由调用方预计算（经 VL 预处理后决定）。
+/// Chat 分支用 supports_image 决定是否 strip 图片；Responses 分支纯透传但
+/// 按 supports_image + model_reasoning_support 决定是否剥图片/reasoning。
 fn upstream_request_parts(
     relay: &crate::settings::RelayProfile,
     request_json: Value,
+    supports_image: bool,
 ) -> anyhow::Result<(String, Value, UpstreamWireApi)> {
     let model = request_json
         .get("model")
         .and_then(Value::as_str)
-        .unwrap_or("");
-    let supports_image = model_supports_image(relay, model);
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     match relay.protocol {
-        RelayProtocol::Responses => Ok((
-            responses_url(&relay.base_url),
-            request_json,
-            UpstreamWireApi::Responses,
-        )),
+        RelayProtocol::Responses => {
+            let mut body = request_json;
+            let supports_reasoning =
+                model_supports_reasoning(relay, &model);
+            strip_input_images_in_place(&mut body, supports_image);
+            strip_reasoning_in_place(&mut body, supports_reasoning);
+            Ok((
+                responses_url(&relay.base_url),
+                body,
+                UpstreamWireApi::Responses,
+            ))
+        }
         RelayProtocol::ChatCompletions => Ok((
             chat_completions_url(&relay.base_url),
             responses_to_chat_completions_with_image_support(request_json, supports_image)?,
             UpstreamWireApi::ChatCompletions,
         )),
     }
+}
+
+/// 测试友好的公开入口：与 `upstream_request_parts` 签名一致，供集成测试使用。
+pub fn upstream_request_parts_with_image_decision(
+    relay: &crate::settings::RelayProfile,
+    request_json: Value,
+    supports_image: bool,
+) -> anyhow::Result<(String, Value, UpstreamWireApi)> {
+    upstream_request_parts(relay, request_json, supports_image)
 }
 
 fn upstream_request_builder(
@@ -796,15 +824,82 @@ fn validate_upstream(relay: &crate::settings::RelayProfile) -> anyhow::Result<()
     Ok(())
 }
 
+/// 解析 per-model 能力 JSON map 并查找指定 model。**大小写不敏感**。
+/// Codex 发送的 model 名可能与 map key 大小写不一致（如 map "GLM-5.2" vs Codex "glm-5.2"）。
+/// 非法 JSON / 空字符串 / model 未命中 -> 返回 `None`，由调用方走 fallback。
+fn lookup_model_bool_support(map_json: &str, model: &str) -> Option<bool> {
+    let map: std::collections::HashMap<String, bool> = match serde_json::from_str(map_json) {
+        Ok(map) => map,
+        Err(_) => return None,
+    };
+    let model_lower = model.to_ascii_lowercase();
+    map.iter()
+        .find(|(k, _)| k.to_ascii_lowercase() == model_lower)
+        .map(|(_, v)| *v)
+}
+
+/// 判断 per-model 能力 map 是否为有效且非空的 JSON。
+fn model_bool_map_is_valid_and_nonempty(map_json: &str) -> bool {
+    match serde_json::from_str::<std::collections::HashMap<String, bool>>(map_json) {
+        Ok(map) => !map.is_empty(),
+        Err(_) => false,
+    }
+}
+
 /// 路径 A：根据 relay 配置判断目标模型是否支持图片输入。
 ///
-/// MVP 规则：profile 级开关 `strip_images` 控制 strip 行为。
-/// - `strip_images = true`  → 模型不支持图片（`supports_image = false`）
-/// - `strip_images = false` → 模型支持图片（默认，`supports_image = true`）
-///
-/// 注意：本函数是路径 A 的策略入口，进阶可在 per-model map 上叠加判断。
-pub fn model_supports_image(relay: &crate::settings::RelayProfile, _model: &str) -> bool {
+/// per-model 图片能力查询。map 命中 -> 用 map 值；未命中时：
+/// - map 非空 → 默认 true（视觉模型不被误伤）
+/// - map 空/非法 → 回退 `!strip_images`（向后兼容）
+pub fn model_supports_image(relay: &crate::settings::RelayProfile, model: &str) -> bool {
+    if let Some(value) = lookup_model_bool_support(&relay.model_image_support, model) {
+        return value;
+    }
+    if model_bool_map_is_valid_and_nonempty(&relay.model_image_support) {
+        return true;
+    }
     !relay.strip_images
+}
+
+/// per-model 推理能力查询。map 命中 -> 用 map 值；未命中 -> 默认 `true`（支持 reasoning）。
+pub fn model_supports_reasoning(relay: &crate::settings::RelayProfile, model: &str) -> bool {
+    lookup_model_bool_support(&relay.model_reasoning_support, model).unwrap_or(true)
+}
+
+/// 移除 Responses body `input` 中所有的 `input_image` 块。
+/// supports_image=true 时 no-op；false 时遍历所有 input items，
+/// 保留 type != "input_image" 的 part。
+/// input 为字符串、content 为字符串时为 no-op（不崩）。
+pub fn strip_input_images_in_place(body: &mut Value, supports_image: bool) {
+    if supports_image {
+        return;
+    }
+    let Some(input) = body.get_mut("input") else {
+        return;
+    };
+    let Some(items) = input.as_array_mut() else {
+        return;
+    };
+    for item in items.iter_mut() {
+        let Some(content) = item.get_mut("content") else {
+            continue;
+        };
+        let Some(parts) = content.as_array_mut() else {
+            continue;
+        };
+        parts.retain(|part| part.get("type").and_then(Value::as_str) != Some("input_image"));
+    }
+}
+
+/// 移除 body 顶层的 `reasoning` 字段。
+/// supports_reasoning=true 时 no-op；false 时移除 body["reasoning"]。
+pub fn strip_reasoning_in_place(body: &mut Value, supports_reasoning: bool) {
+    if supports_reasoning {
+        return;
+    }
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("reasoning");
+    }
 }
 
 fn conversation_id_from_responses_request(body: &Value) -> Option<String> {
@@ -829,6 +924,281 @@ fn effective_user_agent(configured_user_agent: &str, original_user_agent: Option
         .filter(|user_agent| !user_agent.is_empty())
         .unwrap_or("")
         .to_string()
+}
+
+// ── VL 预处理（纯文本模型图片理解） ──────────────────────────────
+
+/// 估算 input item 的 token 数（粗估：文本字符数 / 4，跳过图片 base64 数据）。
+fn estimate_item_tokens(item: &Value) -> usize {
+    let Some(content) = item.get("content") else {
+        return 0;
+    };
+    if let Some(s) = content.as_str() {
+        return s.len() / 4;
+    }
+    let Some(parts) = content.as_array() else {
+        return 0;
+    };
+    let mut chars = 0;
+    for part in parts {
+        let part_type = part.get("type").and_then(Value::as_str).unwrap_or("");
+        if matches!(part_type, "input_text" | "output_text" | "text") {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                chars += text.len();
+            }
+        }
+    }
+    chars / 4
+}
+
+/// 从末尾遍历 input items，累积 token 直到超过 context_window。
+/// 返回需要 VL 处理的 item 索引列表（已按原始顺序排列）。
+/// context_window=0 表示不限制，返回全部索引。
+fn items_within_vl_window(input: &[Value], context_window: u64) -> Vec<usize> {
+    if context_window == 0 {
+        return (0..input.len()).collect();
+    }
+    let mut tokens: u64 = 0;
+    let mut indices = vec![];
+    for i in (0..input.len()).rev() {
+        tokens += estimate_item_tokens(&input[i]) as u64;
+        if tokens > context_window {
+            break;
+        }
+        indices.push(i);
+    }
+    indices.reverse();
+    indices
+}
+
+/// 从 input items 中收集用户原文（同一条消息里的 input_text）。
+fn collect_input_text(input: &[Value]) -> String {
+    for item in input.iter().rev() {
+        let Some(content) = item.get("content") else {
+            continue;
+        };
+        let Some(parts) = content.as_array() else {
+            continue;
+        };
+        for part in parts {
+            if part.get("type").and_then(Value::as_str) == Some("input_text") {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    return text.to_string();
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// 从 input_image part 中提取 image_url。
+/// 支持字符串格式（Responses）和对象格式 `{url, detail}`（ChatCompletions）。
+fn extract_image_url(part: &Value) -> Option<String> {
+    let iu = part.get("image_url")?;
+    if let Some(s) = iu.as_str() {
+        return Some(s.to_string());
+    }
+    iu.get("url").and_then(Value::as_str).map(|s| s.to_string())
+}
+
+/// 调用 VL API 描述单张图。
+/// 按 vl_config.protocol 适配 image_url 格式和 token 参数名。
+async fn describe_image_with_vl(
+    image_url: &str,
+    user_text: &str,
+    vl_config: &crate::settings::VisionRelayConfig,
+    client: &reqwest::Client,
+) -> anyhow::Result<String> {
+    let prompt = if user_text.is_empty() {
+        "简要描述这张图片".to_string()
+    } else {
+        format!(
+            "用户想了解：{user_text}\n请根据图片详细描述与用户问题相关的内容，包括文字、UI 元素、错误信息、布局结构。请用中文回复。"
+        )
+    };
+
+    let body = match vl_config.protocol {
+        crate::settings::RelayProtocol::ChatCompletions => json!({
+            "model": vl_config.model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}}
+                ]
+            }],
+            "max_tokens": vl_config.max_tokens,
+        }),
+        crate::settings::RelayProtocol::Responses => json!({
+            "model": vl_config.model,
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": image_url}
+                ]
+            }],
+            "max_output_tokens": vl_config.max_tokens,
+        }),
+    };
+
+    let endpoint = match vl_config.protocol {
+        crate::settings::RelayProtocol::ChatCompletions => {
+            format!("{}/chat/completions", vl_config.base_url.trim_end_matches('/'))
+        }
+        crate::settings::RelayProtocol::Responses => {
+            format!("{}/responses", vl_config.base_url.trim_end_matches('/'))
+        }
+    };
+
+    let response = client
+        .post(&endpoint)
+        .bearer_auth(&vl_config.api_key)
+        .json(&body)
+        .send()
+        .await?;
+    let status = response.status();
+    let response_body: Value = response.json().await?;
+
+    if !status.is_success() {
+        anyhow::bail!(
+            "VL API returned {}: {}",
+            status.as_u16(),
+            serde_json::to_string(&response_body).unwrap_or_default()
+        );
+    }
+
+    // 提取文字内容
+    let text = match vl_config.protocol {
+        crate::settings::RelayProtocol::ChatCompletions => {
+            response_body["choices"][0]["message"]["content"]
+                .as_str()
+                .map(|s| s.to_string())
+        }
+        crate::settings::RelayProtocol::Responses => {
+            response_body["output"][0]["content"][0]["text"]
+                .as_str()
+                .map(|s| s.to_string())
+        }
+    };
+
+    text.ok_or_else(|| anyhow::anyhow!("VL API returned no text content"))
+}
+
+/// 遍历 input 中的 input_image 块，调 VL API 翻译为文字描述替换为 input_text。
+/// context_window=0 不限制窗口；>0 时窗口外的图片直接 strip。
+pub async fn analyze_images_with_vl(
+    body: &mut Value,
+    vl_config: &crate::settings::VisionRelayConfig,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    if !vl_config.enabled {
+        return Ok(());
+    }
+
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+
+    let window_indices = items_within_vl_window(input, vl_config.context_window);
+    let user_text = collect_input_text(input);
+
+    // VL 处理窗口内的图
+    for &idx in &window_indices {
+        let Some(item) = input.get_mut(idx) else {
+            continue;
+        };
+        let Some(parts) = item.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for part in parts.iter_mut() {
+            if part.get("type").and_then(Value::as_str) != Some("input_image") {
+                continue;
+            }
+            let Some(img_url) = extract_image_url(part) else {
+                continue;
+            };
+            let description = describe_image_with_vl(&img_url, &user_text, vl_config, client).await?;
+
+            let _ = crate::diagnostic_log::append_diagnostic_log(
+                "protocol_proxy.vl_described",
+                json!({
+                    "vlModel": vl_config.model,
+                    "image_url_len": img_url.len(),
+                    "image_url_is_data": img_url.starts_with("data:"),
+                    "description_preview": &description[..description.len().min(200)]
+                }),
+            );
+
+            // 替换 input_image → input_text
+            *part = json!({
+                "type": "input_text",
+                "text": format!("# 图片内容描述\n\n{description}")
+            });
+        }
+    }
+
+    // 窗口外的图片 strip 掉
+    let window_set: std::collections::HashSet<usize> = window_indices.into_iter().collect();
+    for (idx, item) in input.iter_mut().enumerate() {
+        if window_set.contains(&idx) {
+            continue;
+        }
+        if let Some(parts) = item.get_mut("content").and_then(Value::as_array_mut) {
+            parts.retain(|part| part.get("type").and_then(Value::as_str) != Some("input_image"));
+        }
+    }
+
+    Ok(())
+}
+
+/// VL 入口：判断是否需要 VL 预处理，失败时降级为 strip（不阻断用户）。
+/// 返回 `(supports_image, body)` —— 调用方据此决定后续 strip 行为。
+pub async fn apply_vl_with_fallback(
+    relay: &crate::settings::RelayProfile,
+    request_json: Value,
+    vision_relay: &crate::settings::VisionRelayConfig,
+    user_agent: &str,
+) -> anyhow::Result<(bool, Value)> {
+    let model = request_json
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let base_supports_image = model_supports_image(relay, model);
+
+    if base_supports_image || !vision_relay.enabled {
+        return Ok((base_supports_image, request_json));
+    }
+
+    let client = crate::http_client::proxied_client(user_agent)?;
+    let mut vl_body = request_json.clone();
+    match analyze_images_with_vl(&mut vl_body, vision_relay, &client).await {
+        Ok(()) => {
+            let _ = crate::diagnostic_log::append_diagnostic_log(
+                "protocol_proxy.vl_preprocess_ok",
+                json!({
+                    "relayId": relay.id,
+                    "relayName": relay.name,
+                    "model": model,
+                    "vlModel": vision_relay.model
+                }),
+            );
+            Ok((true, vl_body))
+        }
+        Err(error) => {
+            let _ = crate::diagnostic_log::append_diagnostic_log(
+                "protocol_proxy.vl_preprocess_failed",
+                json!({
+                    "relayId": relay.id,
+                    "relayName": relay.name,
+                    "model": model,
+                    "vlModel": vision_relay.model,
+                    "error": error.to_string()
+                }),
+            );
+            Ok((false, request_json))
+        }
+    }
 }
 
 pub async fn handle_responses_proxy_request(body: &str) -> anyhow::Result<ProxyHttpResponse> {
