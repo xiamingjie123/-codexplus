@@ -10,7 +10,7 @@
 
 ### 1.1 用户痛点
 
-Codex++ 用户常配置纯文本第三方模型（DeepSeek-V4、GLM-5.2、kimi-k2.6 等），这些模型存在两类能力缺失：
+Codex++ 用户常配置纯文本第三方模型（DeepSeek-V4、GLM-5.2等），这些模型存在两类能力缺失：
 
 1. **不支持图片输入** — 用户在对话框上传图片，或 Codex 在执行视觉任务时自动截图发回对话框，模型因无法解析 `image_url` / `input_image` 字段而报错：
    ```
@@ -345,6 +345,8 @@ pub vision_relay: VisionRelayConfig,
 - **contextWindow**：0 显示为空，占位符"留空不限制"
 - **独立保存按钮**：VL 设置有显式保存按钮，不依赖页面级保存
 
+![VL 设置页面截图](image/PR-strip-images-feature/视觉模型设置页面.jpeg)
+
 ### 4.2 per-model 能力表格：`App.tsx` + `model-windows.ts`
 
 在供应商配置的模型列表表格中新增两列：
@@ -381,6 +383,8 @@ pub vision_relay: VisionRelayConfig,
 - **列名"只支持文本"而非"支持图片"**：`textOnly` 默认 `false`，因为多模态是模型的默认自然状态，纯文本才是需要标记的例外
 - **"不支持推理"列**：独立于图片能力，kimi-k2.6 不支持推理但支持图片，minimax-m3 两者都支持
 - **注释明确标注协议范围**："以下仅在选择 Chat Completions 协议时生效"，避免用户误以为 Responses 格式也会 strip
+
+![供应商配置页面截图](image/PR-strip-images-feature/供应商配置页面.jpeg)
 
 ### 4.3 前端数据层：`model-windows.ts`（+89 行）
 
@@ -635,5 +639,3 @@ BigPizzaV3 在 #1405 提了 6 条阻塞意见。对照本 PR 的状态：
 | 6. 并发/图片上限 | ✅ 图片上限 10 张；串行调 VL 无并发问题 |
 
 ---
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
