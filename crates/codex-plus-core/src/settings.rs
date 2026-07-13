@@ -199,6 +199,8 @@ pub struct BackendSettings {
     pub enhancements_enabled: bool,
     #[serde(rename = "computerUseGuardEnabled", default)]
     pub computer_use_guard_enabled: bool,
+    #[serde(rename = "codexAppUserScriptHotReload", default)]
+    pub codex_app_user_script_hot_reload: bool,
     #[serde(rename = "codexAppPluginMarketplaceUnlock", default = "default_true")]
     pub codex_app_plugin_marketplace_unlock: bool,
     #[serde(rename = "codexAppPluginAutoExpand", default = "default_true")]
@@ -333,6 +335,7 @@ impl Default for BackendSettings {
             relay_profiles_enabled: true,
             enhancements_enabled: true,
             computer_use_guard_enabled: false,
+            codex_app_user_script_hot_reload: false,
             codex_app_plugin_marketplace_unlock: true,
             codex_app_plugin_auto_expand: true,
             codex_app_model_whitelist_unlock: true,
@@ -774,6 +777,7 @@ fn merge_known_setting_fields(target: &mut Map<String, Value>, source: &Map<Stri
     {
         target.insert("computerUseGuardEnabled".to_string(), Value::Bool(value));
     }
+    merge_bool_setting(target, source, "codexAppUserScriptHotReload");
     merge_bool_setting(target, source, "codexAppPluginMarketplaceUnlock");
     merge_bool_setting(target, source, "codexAppPluginAutoExpand");
     merge_bool_setting(target, source, "codexAppModelWhitelistUnlock");
@@ -1224,6 +1228,7 @@ mod tests {
         assert!(settings.relay_profiles_enabled);
         assert!(settings.enhancements_enabled);
         assert!(!settings.computer_use_guard_enabled);
+        assert!(!settings.codex_app_user_script_hot_reload);
         assert!(settings.codex_app_plugin_marketplace_unlock);
         assert!(settings.codex_app_plugin_auto_expand);
         assert!(!settings.codex_app_thread_id_badge);
@@ -1299,6 +1304,16 @@ mod tests {
 
         assert!(legacy_settings.codex_app_plugin_marketplace_unlock);
         assert!(legacy_settings.codex_app_plugin_auto_expand);
+    }
+
+    #[test]
+    fn settings_deserialize_user_script_hot_reload_defaults_to_false_and_reads_value() {
+        let legacy: BackendSettings = serde_json::from_str("{}").unwrap();
+        assert!(!legacy.codex_app_user_script_hot_reload);
+
+        let enabled: BackendSettings =
+            serde_json::from_str(r#"{"codexAppUserScriptHotReload":true}"#).unwrap();
+        assert!(enabled.codex_app_user_script_hot_reload);
     }
 
     #[test]
@@ -1898,6 +1913,22 @@ experimental_bearer_token = "sk-existing""#
 
         assert_eq!(updated.launch_mode, LaunchMode::Relay);
         assert_eq!(saved["launchMode"], json!("relay"));
+    }
+
+    #[test]
+    fn settings_store_update_persists_user_script_hot_reload() {
+        let dir = temp_dir();
+        let store = SettingsStore::new(dir.join("settings.json"));
+
+        let updated = store
+            .update(json!({"codexAppUserScriptHotReload": true}))
+            .unwrap();
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap())
+                .unwrap();
+
+        assert!(updated.codex_app_user_script_hot_reload);
+        assert_eq!(saved["codexAppUserScriptHotReload"], json!(true));
     }
 
     #[test]

@@ -778,9 +778,17 @@ async fn try_inject_with_context(
         &new_document_scripts,
     )
     .await?;
-    runtime.remember_user_script_snapshot();
-    runtime.start_user_script_hot_reload_watchdog();
+    if should_start_user_script_hot_reload(&settings) {
+        runtime.remember_user_script_snapshot();
+        runtime.start_user_script_hot_reload_watchdog();
+    }
     Ok(())
+}
+
+fn should_start_user_script_hot_reload(
+    settings: &codex_plus_core::settings::BackendSettings,
+) -> bool {
+    settings.codex_app_user_script_hot_reload
 }
 
 fn default_codex_db_path() -> PathBuf {
@@ -901,13 +909,26 @@ mod tests {
     }
 
     #[test]
-    fn launcher_starts_user_script_hot_reload_watchdog_after_bridge_injection() {
+    fn launcher_starts_user_script_hot_reload_watchdog_only_when_enabled() {
         let source = include_str!("main.rs");
 
+        assert!(source.contains("should_start_user_script_hot_reload(&settings)"));
         assert!(source.contains("start_user_script_hot_reload_watchdog"));
         assert!(source.contains("reload_user_scripts_if_changed"));
         assert!(source.contains("user_scripts.snapshot()"));
         assert!(source.contains("user_script_hot_reload_started"));
+    }
+
+    #[test]
+    fn user_script_hot_reload_is_opt_in() {
+        let disabled = codex_plus_core::settings::BackendSettings::default();
+        assert!(!should_start_user_script_hot_reload(&disabled));
+
+        let enabled = codex_plus_core::settings::BackendSettings {
+            codex_app_user_script_hot_reload: true,
+            ..disabled
+        };
+        assert!(should_start_user_script_hot_reload(&enabled));
     }
 
     #[test]

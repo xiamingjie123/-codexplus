@@ -153,6 +153,9 @@ export const EN_PLAIN: Record<string, string> = {
     "Content comes from BigPizzaV3/Ad-List, split into sponsor recommendations and regular recommendations.",
   "内置": "Built-in",
   "内置、手动和市场安装脚本；可在这里启停或删除用户脚本": "Built-in, manual and marketplace-installed scripts; enable, disable or delete user scripts here",
+  "用户脚本热重载": "User script hot reload",
+  "默认关闭；开启后每 1 秒检查脚本和配置变化并自动 reload，可能增加资源消耗或导致脚本重复执行。需重启 Codex 才生效。":
+    "Off by default; when enabled, checks scripts and configuration every second and reloads automatically. This may use more resources or cause scripts to run more than once. Restart Codex for this to take effect.",
   "内置和用户自定义脚本清单": "Built-in and user-defined script inventory",
   "切换 thread 时恢复上一次浏览位置。": "Restore the last scroll position when switching threads.",
   "切换中": "Switching",
