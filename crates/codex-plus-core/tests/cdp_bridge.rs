@@ -910,6 +910,128 @@ process.stdout.write(JSON.stringify({{
 }
 
 #[test]
+fn injection_script_applies_projectless_main_window_contract() {
+    let script = assets::injection_script(57321);
+    assert!(script.contains("installCodexProjectlessNewTaskButtons"));
+    assert!(script.contains("generic-new-task-button"));
+    let cases = run_projectless_main_window_contract_harness();
+
+    assert_eq!(cases["englishNewTask"], "generic");
+    assert_eq!(cases["chineseNewTask"], "generic");
+    assert_eq!(cases["compactChineseNewTask"], "generic");
+    assert_eq!(cases["quickChat"], "generic");
+    assert_eq!(cases["explicitProject"], "project");
+    assert_eq!(cases["projectRow"], "project");
+    assert_eq!(cases["unrelated"], "");
+    assert_eq!(cases["genericEnabled"], true);
+    assert_eq!(cases["explicitProjectWins"], false);
+    assert_eq!(cases["disabledIsNoop"], false);
+}
+
+fn run_projectless_main_window_contract_harness() -> serde_json::Value {
+    let temp = tempfile::tempdir().expect("temp dir should be created");
+    let script_path = temp.path().join("renderer-inject.js");
+    let harness_path = temp.path().join("projectless-main-window-harness.cjs");
+    std::fs::write(&script_path, assets::injection_script(57321))
+        .expect("injection script should be written");
+    let mut harness = std::fs::File::create(&harness_path).expect("harness should be created");
+    write!(
+        harness,
+        r#"
+const scriptPath = {script_path};
+const store = new Map();
+function node() {{
+  return {{
+    appendChild() {{}}, prepend() {{}}, remove() {{}}, setAttribute() {{}}, removeAttribute() {{}},
+    addEventListener() {{}}, querySelector() {{ return null; }}, querySelectorAll() {{ return []; }},
+    closest() {{ return null; }},
+    classList: {{ add() {{}}, remove() {{}}, toggle() {{}}, contains() {{ return false; }} }},
+    dataset: {{}}, style: {{}}, children: [], isConnected: true, textContent: "", innerHTML: "",
+  }};
+}}
+function trigger(label, kind = "generic") {{
+  const value = {{
+    textContent: label,
+    getAttribute(name) {{ return name === "aria-label" ? label : null; }},
+    closest(selector) {{
+      if (selector.includes('Start new chat in') || selector.includes('data-app-action-sidebar-project-row')) {{
+        return kind === "project-button" || kind === "project-row" ? value : null;
+      }}
+      if (selector === 'button, a, [role="button"], [role="menuitem"]') return value;
+      return null;
+    }},
+  }};
+  return value;
+}}
+globalThis.window = globalThis;
+window.__CODEX_PLUS_TEST_PROJECTLESS__ = true;
+window.addEventListener = () => {{}};
+window.removeEventListener = () => {{}};
+window.dispatchEvent = () => true;
+globalThis.Element = class Element {{}};
+globalThis.HTMLElement = class HTMLElement extends Element {{}};
+globalThis.HTMLAnchorElement = class HTMLAnchorElement extends HTMLElement {{}};
+globalThis.MutationObserver = class MutationObserver {{ observe() {{}} disconnect() {{}} }};
+globalThis.ResizeObserver = class ResizeObserver {{ observe() {{}} disconnect() {{}} }};
+globalThis.requestAnimationFrame = () => 0;
+globalThis.cancelAnimationFrame = () => {{}};
+globalThis.document = {{
+  scripts: [], documentElement: node(), body: node(), createElement: () => node(),
+  getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
+  addEventListener() {{}}, removeEventListener() {{}},
+}};
+globalThis.localStorage = {{
+  getItem: (key) => store.has(key) ? store.get(key) : null,
+  setItem: (key, value) => store.set(key, String(value)), removeItem: (key) => store.delete(key),
+}};
+globalThis.sessionStorage = globalThis.localStorage;
+globalThis.location = {{ href: "https://codex.test/index.html", pathname: "/index.html", search: "", hash: "" }};
+window.location = globalThis.location;
+globalThis.navigator = {{ userAgent: "node-test" }};
+globalThis.performance = {{ getEntriesByType: () => [] }};
+require(scriptPath);
+const api = window.__codexPlusProjectlessTest;
+const englishNewTask = api.triggerKind(trigger("New task"));
+const chineseNewTask = api.triggerKind(trigger("新建任务\nCtrl+N"));
+const compactChineseNewTask = api.triggerKind(trigger("新建任务Ctrl+N"));
+const quickChat = api.triggerKind(trigger("Quick Chat"));
+const explicitProject = api.triggerKind(trigger("Start new chat in Demo", "project-button"));
+const projectRow = api.triggerKind(trigger("Demo", "project-row"));
+const unrelated = api.triggerKind(trigger("Settings"));
+api.setEnabled(true);
+api.setIntent("generic", "test");
+const genericEnabled = api.shouldEnforce();
+api.setIntent("project", "test");
+const explicitProjectWins = api.shouldEnforce();
+api.setEnabled(false);
+api.setIntent("generic", "test");
+const disabledIsNoop = api.shouldEnforce();
+process.stdout.write(JSON.stringify({{
+  englishNewTask, chineseNewTask, compactChineseNewTask, quickChat, explicitProject, projectRow, unrelated,
+  genericEnabled, explicitProjectWins, disabledIsNoop,
+}}));
+process.exit(0);
+"#,
+        script_path = serde_json::to_string(&script_path.to_string_lossy().to_string())
+            .expect("script path should serialize")
+    )
+    .expect("harness should be written");
+    drop(harness);
+
+    let output = Command::new("node")
+        .arg(&harness_path)
+        .output()
+        .expect("node should run projectless main-window harness");
+    assert!(
+        output.status.success(),
+        "node harness failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("harness stdout should be JSON")
+}
+
+#[test]
 fn injection_script_restores_thread_scroll_positions() {
     let script = assets::injection_script(57321);
 

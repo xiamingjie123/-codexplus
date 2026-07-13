@@ -330,6 +330,9 @@
   const codexThreadServiceTierDraftBindWindowMs = 60 * 1000;
   const codexServiceTierRequestOverrideVersion = "4";
   const codexAppServerModelRequestPatchVersion = "1";
+  const codexProjectlessMainWindowVersion = "1";
+  const codexProjectlessMainWindowSetting = { key: "hotkey-window-projectless-default-enabled", default: false };
+  const codexProjectlessMainWindowRetryDelaysMs = [0, 250, 750, 1500, 3000];
   const codexPluginMarketplaceUnlockVersion = "13";
   const codexPluginAutoExpandVersion = "1";
   const codexPluginAutoExpandMaxClicks = 80;
@@ -4738,6 +4741,185 @@
     return await codexStateCall("set-global-state", { params: { key, value } });
   }
 
+  const codexProjectlessMainWindowState = window.__codexProjectlessMainWindowState || {
+    loaded: false,
+    enabled: false,
+    intent: "",
+    source: "",
+    revision: 0,
+  };
+  window.__codexProjectlessMainWindowState = codexProjectlessMainWindowState;
+
+  function codexProjectlessMainWindowEnabled() {
+    return codexProjectlessMainWindowState.loaded
+      && codexProjectlessMainWindowState.enabled
+      && codexPlusBackendSettings.enhancementsEnabled !== false;
+  }
+
+  function clearCodexProjectlessMainWindowTimers() {
+    (window.__codexProjectlessMainWindowTimers || []).forEach((timer) => clearTimeout(timer));
+    window.__codexProjectlessMainWindowTimers = [];
+  }
+
+  function setCodexProjectlessMainWindowIntent(intent, source) {
+    const normalizedIntent = intent === "generic" || intent === "project" ? intent : "";
+    codexProjectlessMainWindowState.intent = normalizedIntent;
+    codexProjectlessMainWindowState.source = String(source || "");
+    codexProjectlessMainWindowState.revision += 1;
+    if (normalizedIntent !== "generic") clearCodexProjectlessMainWindowTimers();
+  }
+
+  function codexProjectlessMainWindowShouldEnforce() {
+    return codexProjectlessMainWindowEnabled()
+      && codexProjectlessMainWindowState.intent === "generic";
+  }
+
+  async function enforceCodexProjectlessMainWindow(source, revision) {
+    if (!codexProjectlessMainWindowShouldEnforce()) return false;
+    if (revision != null && revision !== codexProjectlessMainWindowState.revision) return false;
+    try {
+      const activeRoots = await getCodexGlobalState("active-workspace-roots").catch(() => null);
+      if (!codexProjectlessMainWindowShouldEnforce()) return false;
+      if (revision != null && revision !== codexProjectlessMainWindowState.revision) return false;
+      if (!Array.isArray(activeRoots) || activeRoots.length > 0) {
+        await setCodexGlobalState("active-workspace-roots", []);
+        sendCodexPlusDiagnostic("projectless_main_window_runtime_prepared", {
+          source: String(source || "runtime"),
+          previousRootCount: Array.isArray(activeRoots) ? activeRoots.length : activeRoots == null ? 0 : 1,
+        });
+        return true;
+      }
+    } catch (error) {
+      sendCodexPlusDiagnostic("projectless_main_window_runtime_failed", {
+        source: String(source || "runtime"),
+        errorName: error?.name || "",
+        errorMessage: error?.message || String(error),
+      });
+    }
+    return false;
+  }
+
+  function scheduleCodexProjectlessMainWindowEnforcement(source) {
+    clearCodexProjectlessMainWindowTimers();
+    if (!codexProjectlessMainWindowShouldEnforce()) return;
+    const revision = codexProjectlessMainWindowState.revision;
+    window.__codexProjectlessMainWindowTimers = codexProjectlessMainWindowRetryDelaysMs.map((delay) => setTimeout(() => {
+      void enforceCodexProjectlessMainWindow(source, revision);
+    }, delay));
+  }
+
+  function codexProjectlessMainWindowTriggerKind(target) {
+    if (!target?.closest) return "";
+    const explicitProject = target.closest(
+      'button[aria-label^="Start new chat in "], [data-app-action-sidebar-project-row][data-app-action-sidebar-project-id], [role="menuitem"][data-project-id], [role="menuitem"][data-workspace-root]'
+    );
+    if (explicitProject) return "project";
+    const trigger = target.closest('button, a, [role="button"], [role="menuitem"]');
+    if (!trigger) return "";
+    const labels = [
+      trigger.getAttribute?.("aria-label"),
+      trigger.getAttribute?.("title"),
+      trigger.innerText || trigger.textContent,
+    ].map((value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase()).filter(Boolean);
+    return labels.some((label) => /^(new (task|chat)|quick chat|新建(任务|对话)|快速对话)(?:\s|ctrl\+|cmd\+|⌘|$)/i.test(label))
+      ? "generic"
+      : "";
+  }
+
+  function beginCodexProjectlessGenericNewTask(source) {
+    setCodexProjectlessMainWindowIntent("generic", source);
+    try {
+      sessionStorage.removeItem(upstreamProjectContextKey);
+    } catch {
+    }
+    scheduleCodexProjectlessMainWindowEnforcement(source);
+  }
+
+  function installCodexProjectlessNewTaskButtons() {
+    if (!codexProjectlessMainWindowEnabled()) return;
+    Array.from(document.querySelectorAll("button, a, [role='button'], [role='menuitem']")).forEach((trigger) => {
+      if (trigger.closest?.('[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')) return;
+      if (codexProjectlessMainWindowTriggerKind(trigger) !== "generic") return;
+      if (trigger.dataset?.codexProjectlessMainWindow === codexProjectlessMainWindowVersion) return;
+      if (trigger.dataset) trigger.dataset.codexProjectlessMainWindow = codexProjectlessMainWindowVersion;
+      trigger.addEventListener("click", () => beginCodexProjectlessGenericNewTask("generic-new-task-button"), true);
+    });
+  }
+
+  function handleCodexProjectlessMainWindowNavigation(event) {
+    const target = event?.target?.closest ? event.target : event?.target?.parentElement;
+    const kind = codexProjectlessMainWindowTriggerKind(target);
+    if (kind === "project") {
+      setCodexProjectlessMainWindowIntent("project", "explicit-project");
+      return;
+    }
+    if (kind !== "generic") return;
+    beginCodexProjectlessGenericNewTask("generic-new-task");
+  }
+
+  function installCodexProjectlessMainWindowProtection() {
+    if (window.__codexProjectlessMainWindowProtectionVersion === codexProjectlessMainWindowVersion) return;
+    document.removeEventListener("pointerdown", window.__codexProjectlessMainWindowNavigationHandler, true);
+    document.removeEventListener("click", window.__codexProjectlessMainWindowNavigationHandler, true);
+    window.__codexProjectlessMainWindowNavigationHandler = handleCodexProjectlessMainWindowNavigation;
+    document.addEventListener("pointerdown", window.__codexProjectlessMainWindowNavigationHandler, true);
+    document.addEventListener("click", window.__codexProjectlessMainWindowNavigationHandler, true);
+    window.__codexProjectlessMainWindowProtectionVersion = codexProjectlessMainWindowVersion;
+  }
+
+  async function getCodexProjectlessMainWindowSetting() {
+    try {
+      const settingStorage = await codexSettingStorageModule();
+      return await settingStorage.n(codexProjectlessMainWindowSetting);
+    } catch (error) {
+      if (typeof codexStateCall === "function") {
+        const result = await codexStateCall("get-setting", { params: { key: codexProjectlessMainWindowSetting.key } });
+        return result && Object.prototype.hasOwnProperty.call(result, "value")
+          ? result.value
+          : codexProjectlessMainWindowSetting.default;
+      }
+      throw error;
+    }
+  }
+
+  async function loadCodexProjectlessMainWindowSetting(attempt = 0) {
+    try {
+      codexProjectlessMainWindowState.enabled = (await getCodexProjectlessMainWindowSetting()) === true;
+      codexProjectlessMainWindowState.loaded = true;
+      if (!codexProjectlessMainWindowState.enabled) {
+        setCodexProjectlessMainWindowIntent("", "setting-disabled");
+        return;
+      }
+      if (!codexProjectlessMainWindowState.intent) {
+        setCodexProjectlessMainWindowIntent("generic", "startup");
+      }
+      scheduleCodexProjectlessMainWindowEnforcement("startup");
+      installCodexProjectlessNewTaskButtons();
+    } catch (error) {
+      if (attempt < 60) {
+        setTimeout(() => void loadCodexProjectlessMainWindowSetting(attempt + 1), 250);
+        return;
+      }
+      sendCodexPlusDiagnostic("projectless_main_window_setting_failed", {
+        errorName: error?.name || "",
+        errorMessage: error?.message || String(error),
+      });
+    }
+  }
+
+  if (window.__CODEX_PLUS_TEST_PROJECTLESS__) {
+    window.__codexPlusProjectlessTest = {
+      triggerKind: codexProjectlessMainWindowTriggerKind,
+      setEnabled: (enabled) => {
+        codexProjectlessMainWindowState.loaded = true;
+        codexProjectlessMainWindowState.enabled = enabled === true;
+      },
+      setIntent: setCodexProjectlessMainWindowIntent,
+      shouldEnforce: codexProjectlessMainWindowShouldEnforce,
+      state: () => ({ ...codexProjectlessMainWindowState }),
+    };
+  }
+
   function objectGlobalState(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
   }
@@ -8336,6 +8518,7 @@
   function scanLightweight() {
     installStyle();
     installCodexServiceTierDispatcherPatch();
+    installCodexProjectlessNewTaskButtons();
     installCodexPlusMenu();
     localizeCodexMenus();
     scheduleBackendHeartbeat();
@@ -9064,6 +9247,8 @@
   }
 
   void loadBackendSettingsForStartup();
+  installCodexProjectlessMainWindowProtection();
+  if (!window.__CODEX_PLUS_TEST_PROJECTLESS__) void loadCodexProjectlessMainWindowSetting();
   installUpstreamBranchDropdownAdapter();
   installUpstreamWorktreeNativeAdapter();
   scan();
