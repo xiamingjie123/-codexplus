@@ -1165,7 +1165,7 @@ enabled = true
 }
 
 #[test]
-fn apply_relay_profile_writes_model_catalog_json_for_custom_model_with_context_window() {
+fn apply_relay_profile_writes_full_catalog_for_custom_model_with_context_window() {
     let temp = tempfile::tempdir().unwrap();
     let profile = RelayProfile {
         id: "relay-a".to_string(),
@@ -1198,13 +1198,15 @@ experimental_bearer_token = "sk-new"
     assert!(config.contains(r#"model = "mimo-v2.5""#));
     assert!(config.contains("model_context_window = 1000000"));
     assert!(config.contains("model_auto_compact_token_limit = 800000"));
-    // Custom model with context_window should generate a model_catalog_json entry
-    assert!(config.contains("model_catalog_json"), "Expected model_catalog_json for custom model with context_window");
-    assert!(config.contains("model_catalog_custom.json"));
+    // The full catalog path takes precedence over the single-model fallback.
+    assert!(
+        config.contains("model_catalog_json"),
+        "Expected model_catalog_json for custom model with context_window"
+    );
+    assert!(config.contains("model-catalogs/relay-a.json"));
 
-    // Check the custom catalog file was created
-    let catalog_path = temp.path().join("model_catalog_custom.json");
-    assert!(catalog_path.exists(), "Custom catalog file should exist");
+    let catalog_path = temp.path().join("model-catalogs").join("relay-a.json");
+    assert!(catalog_path.exists(), "Full catalog file should exist");
     let catalog: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&catalog_path).unwrap()).unwrap();
     let models = catalog.get("models").and_then(|v| v.as_array()).unwrap();
@@ -1213,11 +1215,16 @@ experimental_bearer_token = "sk-new"
     assert_eq!(model_entry["slug"].as_str().unwrap(), "mimo-v2.5");
     assert_eq!(model_entry["context_window"].as_u64().unwrap(), 1000000);
     assert_eq!(model_entry["max_context_window"].as_u64().unwrap(), 1000000);
-    assert!(model_entry["base_instructions"].as_str().unwrap().contains("coding agent"));
+    assert!(
+        model_entry["base_instructions"]
+            .as_str()
+            .unwrap()
+            .contains("coding agent")
+    );
 }
 
 #[test]
-fn apply_relay_profile_skips_custom_catalog_when_context_window_empty() {
+fn apply_relay_profile_writes_full_catalog_when_context_window_empty() {
     let temp = tempfile::tempdir().unwrap();
     let profile = RelayProfile {
         id: "relay-a".to_string(),
@@ -1237,7 +1244,7 @@ base_url = "https://relay.example/v1"
         auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
         model_insert_mode: Default::default(),
         model_list: String::new(),
-        context_window: String::new(),   // empty = no override
+        context_window: String::new(), // empty = no override
         auto_compact_limit: String::new(),
         ..RelayProfile::default()
     };
@@ -1246,9 +1253,14 @@ base_url = "https://relay.example/v1"
 
     let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
     assert!(config.contains(r#"model = "mimo-v2.5""#));
-    // No context_window set → no model_context_window in config → no custom catalog
     assert!(!config.contains("model_context_window"));
-    assert!(!config.contains("model_catalog_json"));
+    assert!(config.contains(r#"model_catalog_json = "model-catalogs/relay-a.json""#));
+    assert!(
+        temp.path()
+            .join("model-catalogs")
+            .join("relay-a.json")
+            .exists()
+    );
     assert!(!temp.path().join("model_catalog_custom.json").exists());
 }
 
@@ -1258,7 +1270,7 @@ fn apply_relay_profile_skips_custom_catalog_when_model_empty() {
     let profile = RelayProfile {
         id: "relay-a".to_string(),
         name: "Relay A".to_string(),
-        model: String::new(),            // empty
+        model: String::new(), // empty
         relay_mode: RelayMode::PureApi,
         config_contents: r#"model = ""
 model_provider = "custom"
@@ -1322,6 +1334,42 @@ experimental_bearer_token = "sk-new"
     assert!(config.contains(r#"model_catalog_json = "/custom/path/to/catalog.json""#));
     assert!(!config.contains("model_catalog_custom.json"));
     assert!(!temp.path().join("model_catalog_custom.json").exists());
+}
+
+#[test]
+fn apply_relay_profile_writes_model_catalog_json_for_selected_models() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-a".to_string(),
+        name: "Relay A".to_string(),
+        model: "qwen3-coder".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "qwen3-coder"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_insert_mode: Default::default(),
+        model_list: "deepseek-coder\nqwen3-coder".to_string(),
+        context_window: "200000".to_string(),
+        auto_compact_limit: "160000".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(config.contains("model_catalog_json"));
+    assert!(config.contains("model_context_window = 200000"));
+    assert!(config.contains("model_auto_compact_token_limit = 160000"));
+    assert!(temp.path().join("model-catalogs").exists());
 }
 
 #[test]
@@ -1400,7 +1448,7 @@ experimental_bearer_token = "sk-new"
 }
 
 #[test]
-fn apply_relay_profile_does_not_carry_previous_managed_model_catalog() {
+fn apply_relay_profile_replaces_previous_managed_model_catalog() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::write(
         temp.path().join("config.toml"),
@@ -1430,7 +1478,14 @@ experimental_bearer_token = "sk-new"
     apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
 
     let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
-    assert!(!config.contains("model_catalog_json"));
+    assert!(!config.contains("model-catalogs/previous.json"));
+    assert!(config.contains(r#"model_catalog_json = "model-catalogs/relay-a.json""#));
+    assert!(
+        temp.path()
+            .join("model-catalogs")
+            .join("relay-a.json")
+            .exists()
+    );
 }
 
 #[test]
@@ -3302,7 +3357,7 @@ experimental_bearer_token = "sk-new"
 }
 
 #[test]
-fn apply_relay_profile_generates_custom_catalog_when_context_window_set() {
+fn apply_relay_profile_generates_catalog_for_models_without_suffix() {
     let temp = tempfile::tempdir().unwrap();
     let profile = RelayProfile {
         id: "relay-a".to_string(),
@@ -3331,14 +3386,14 @@ experimental_bearer_token = "sk-new"
     apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
 
     let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
-    // context_window set → custom fallback catalog is generated
     assert!(config.contains("model_catalog_json"));
-    assert!(config.contains("model_catalog_custom.json"));
     assert!(config.contains("model_context_window = 200000"));
-    // But no suffix-based model-catalogs directory
-    assert!(!temp.path().join("model-catalogs").exists());
-    // Custom catalog file exists
-    assert!(temp.path().join("model_catalog_custom.json").exists());
+    assert!(temp.path().join("model-catalogs").exists());
+    let catalog_path = temp.path().join("model-catalogs/relay-a.json");
+    assert!(catalog_path.exists());
+    let catalog = std::fs::read_to_string(&catalog_path).unwrap();
+    assert!(catalog.contains("deepseek-coder"));
+    assert!(catalog.contains("qwen3-coder"));
 }
 
 #[test]
@@ -3707,4 +3762,318 @@ experimental_bearer_token = "sk-new"
         "1000000"
     );
     assert!(!windows.contains_key("deepseek-v4-pro"));
+}
+
+// === Adversarial tests for ensure_full_model_catalog ===
+
+#[test]
+fn full_catalog_skips_when_model_list_and_model_are_empty() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-empty".to_string(),
+        name: "Empty".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(!config.contains("model_catalog_json"));
+    assert!(!temp.path().join("model-catalogs").exists());
+}
+
+#[test]
+fn full_catalog_strips_model_list_suffixes_in_catalog() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-suffix".to_string(),
+        name: "Suffix".to_string(),
+        model: "deepseek-v4-pro".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "deepseek-v4-pro"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_list: "deepseek-v4-pro[1M]\nclaude-sonnet-4[200K]\nqwen3-coder".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(config.contains("model_catalog_json"));
+    let catalog =
+        std::fs::read_to_string(temp.path().join("model-catalogs/relay-suffix.json")).unwrap();
+    // Suffixes stripped from catalog output
+    assert!(!catalog.contains("[1M]"));
+    assert!(!catalog.contains("[200K]"));
+    // All models present in catalog
+    assert!(catalog.contains("deepseek-v4-pro"));
+    assert!(catalog.contains("claude-sonnet-4"));
+    assert!(catalog.contains("qwen3-coder"));
+    // Suffix-derived context windows respected
+    assert!(catalog.contains("1000000"));
+    assert!(catalog.contains("200000"));
+}
+
+#[test]
+fn full_catalog_preserves_user_defined_model_catalog_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-user-catalog".to_string(),
+        name: "User Catalog".to_string(),
+        model: "deepseek-v4-pro".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "deepseek-v4-pro"
+model_catalog_json = "/custom/path/catalog.json"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_list: "deepseek-v4-pro\nqwen3-coder".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    // Preserves user's own catalog path
+    assert!(config.contains(r#"model_catalog_json = "/custom/path/catalog.json""#));
+}
+
+#[test]
+fn full_catalog_skips_when_suffix_catalog_already_set() {
+    let temp = tempfile::tempdir().unwrap();
+    // apply_model_catalog_to_config generates catalog for suffixed models
+    // ensure_full_model_catalog should skip because catalog is already set
+    let profile = RelayProfile {
+        id: "relay-hybrid".to_string(),
+        name: "Hybrid".to_string(),
+        model: "deepseek-v4-pro".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "deepseek-v4-pro"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        // Has suffix models → apply_model_catalog_to_config generates catalog
+        model_list: "deepseek-v4-pro[1M]\nqwen3-coder".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(config.contains("model_catalog_json"));
+    // Only one catalog file written (not duplicated by ensure_full_model_catalog)
+    let catalog_entries: Vec<_> = std::fs::read_dir(temp.path().join("model-catalogs"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert_eq!(catalog_entries.len(), 1);
+}
+
+#[test]
+fn full_catalog_handles_model_list_with_only_whitespace() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-space".to_string(),
+        name: "Space".to_string(),
+        model: "qwen3-coder".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "qwen3-coder"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_list: "  \n  \n  ".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    // Whitespace-only model_list → only current model "qwen3-coder" gets catalog entry
+    assert!(config.contains("model_catalog_json"));
+    let catalog =
+        std::fs::read_to_string(temp.path().join("model-catalogs/relay-space.json")).unwrap();
+    assert!(catalog.contains("qwen3-coder"));
+}
+
+#[test]
+fn full_catalog_deduplicates_model_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-dup".to_string(),
+        name: "Dup".to_string(),
+        model: "qwen3-coder".to_string(), // also in model_list
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "qwen3-coder"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_list: "qwen3-coder\ndeepseek-v4-pro\nqwen3-coder".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let config = std::fs::read_to_string(temp.path().join("config.toml")).unwrap();
+    assert!(config.contains("model_catalog_json"));
+    let catalog =
+        std::fs::read_to_string(temp.path().join("model-catalogs/relay-dup.json")).unwrap();
+    // qwen3-coder slug appears exactly once (deduplicated by collect_catalog_entries)
+    let slug_count = catalog.matches("\"slug\": \"qwen3-coder\"").count();
+    assert_eq!(
+        slug_count, 1,
+        "qwen3-coder slug appears {} times, expected 1",
+        slug_count
+    );
+}
+
+#[test]
+fn full_catalog_respects_model_windows_for_context_window() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-windows".to_string(),
+        name: "Windows".to_string(),
+        model: "deepseek-v4-pro".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "deepseek-v4-pro"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_list: "deepseek-v4-pro\nkimi-k2.6".to_string(),
+        model_windows: r#"{"kimi-k2.6":"262000"}"#.to_string(),
+        context_window: "1000000".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let catalog =
+        std::fs::read_to_string(temp.path().join("model-catalogs/relay-windows.json")).unwrap();
+    // kimi-k2.6 gets its explicit window from model_windows
+    assert!(catalog.contains("262000"));
+    // deepseek-v4-pro gets the fallback context_window
+    assert!(catalog.contains("1000000"));
+}
+
+#[test]
+fn full_catalog_handles_model_list_with_commas() {
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-comma".to_string(),
+        name: "Comma".to_string(),
+        model: "gpt-5".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "gpt-5"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_list: "gpt-5,gpt-5-mini,claude-sonnet-4".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let catalog =
+        std::fs::read_to_string(temp.path().join("model-catalogs/relay-comma.json")).unwrap();
+    assert!(catalog.contains("gpt-5"));
+    assert!(catalog.contains("gpt-5-mini"));
+    assert!(catalog.contains("claude-sonnet-4"));
+}
+
+#[test]
+fn full_catalog_keeps_current_model_first_in_catalog() {
+    // collect_catalog_entries puts current model first, ensure_full_model_catalog uses it
+    let temp = tempfile::tempdir().unwrap();
+    let profile = RelayProfile {
+        id: "relay-order".to_string(),
+        name: "Order".to_string(),
+        model: "zulu-model".to_string(),
+        relay_mode: RelayMode::PureApi,
+        config_contents: r#"model = "zulu-model"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-new"
+"#
+        .to_string(),
+        auth_contents: r#"{"OPENAI_API_KEY":"sk-new"}"#.to_string(),
+        model_list: "alpha-model\nzulu-model\nbeta-model".to_string(),
+        ..RelayProfile::default()
+    };
+
+    apply_relay_profile_files_to_home_with_context(temp.path(), &profile, "").unwrap();
+    let catalog =
+        std::fs::read_to_string(temp.path().join("model-catalogs/relay-order.json")).unwrap();
+    // zulu-model (current model) should come before alpha-model in the JSON array
+    let zulu_pos = catalog.find("\"zulu-model\"").unwrap();
+    let alpha_pos = catalog.find("\"alpha-model\"").unwrap();
+    assert!(
+        zulu_pos < alpha_pos,
+        "current model should appear first in catalog"
+    );
 }

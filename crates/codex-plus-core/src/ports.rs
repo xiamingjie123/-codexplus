@@ -403,5 +403,7 @@ fn _clear_guard_port_env_vars() {
 
 fn _guard_port_env_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().expect("guard port env test lock poisoned")
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("guard port env test lock poisoned")
 }
