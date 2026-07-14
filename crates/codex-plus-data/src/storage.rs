@@ -43,7 +43,8 @@ pub fn delete_local_from_paths_with_cleanup(
     codex_home: &Path,
 ) -> DeleteResult {
     let mut result = delete_local_from_paths(db_paths, backup_store, session);
-    if !matches!(result.status, DeleteStatus::LocalDeleted) {
+    if !matches!(result.status, DeleteStatus::LocalDeleted) && !is_thread_not_found_result(&result)
+    {
         return result;
     }
     let thread_id = if result.session_id.trim().is_empty() {
@@ -53,8 +54,13 @@ pub fn delete_local_from_paths_with_cleanup(
     };
     match crate::provider_sync::prune_deleted_thread_references(codex_home, &[thread_id]) {
         Ok(prune) => {
-            if prune.pruned_session_index_entries > 0 || prune.app_state_pruned {
+            let pruned_any = prune.pruned_session_index_entries > 0 || prune.app_state_pruned;
+            if matches!(result.status, DeleteStatus::LocalDeleted) && pruned_any {
                 result.message = format!("{}，并清理列表入口", result.message);
+            } else if pruned_any {
+                result.status = DeleteStatus::LocalDeleted;
+                result.session_id = normalize_codex_thread_id(&session.session_id);
+                result.message = "本地记录已不存在，已清理残留列表入口".to_string();
             }
         }
         Err(error) => {
@@ -771,6 +777,11 @@ fn failed(session_id: &str, message: String) -> DeleteResult {
         undo_token: None,
         backup_path: None,
     }
+}
+
+fn is_thread_not_found_result(result: &DeleteResult) -> bool {
+    matches!(result.status, DeleteStatus::Failed)
+        && result.message == "Thread not found in local storage"
 }
 
 fn local_deleted(session_id: &str, token: &str, backup_path: &Path) -> DeleteResult {

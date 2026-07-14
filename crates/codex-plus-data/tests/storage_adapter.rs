@@ -524,6 +524,67 @@ fn delete_local_from_paths_with_cleanup_deletes_legacy_thread_and_sidebar_refs()
 }
 
 #[test]
+fn delete_local_from_paths_with_cleanup_removes_stale_sidebar_ref_when_thread_is_missing() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join(".codex");
+    let sqlite_dir = home.join("sqlite");
+    fs::create_dir_all(&sqlite_dir).unwrap();
+    let db_path = sqlite_dir.join("state_5.sqlite");
+    let db = Connection::open(&db_path).unwrap();
+    db.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT)",
+        [],
+    )
+    .unwrap();
+    drop(db);
+    fs::write(
+        home.join("session_index.jsonl"),
+        "{\"id\":\"t1\",\"thread_name\":\"同步上游更新\",\"updated_at\":\"2026-07-15T00:00:00Z\"}\n{\"id\":\"t2\",\"thread_name\":\"保留\",\"updated_at\":\"2026-07-15T00:01:00Z\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        home.join(".codex-global-state.json"),
+        json!({
+            "projectless-thread-ids": ["t1", "t2"],
+            "thread-workspace-root-hints": {
+                "t1": "C:/stale",
+                "t2": "C:/live"
+            },
+            "electron-persisted-atom-state": {
+                "thread-client-id-v1:local%3At1": "client",
+                "sidebar-width": 296
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let result = delete_local_from_paths_with_cleanup(
+        vec![db_path.clone()],
+        BackupStore::new(tmp.path().join("backups")),
+        &session("local%3At1", "同步上游更新"),
+        &home,
+    );
+
+    assert_eq!(result.status, DeleteStatus::LocalDeleted);
+    assert!(result.message.contains("残留列表入口"));
+    assert_eq!(thread_count(&db_path, "t1"), 0);
+    let index = fs::read_to_string(home.join("session_index.jsonl")).unwrap();
+    assert!(!index.contains("\"id\":\"t1\""));
+    assert!(index.contains("\"id\":\"t2\""));
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(home.join(".codex-global-state.json")).unwrap())
+            .unwrap();
+    assert_eq!(state["projectless-thread-ids"], json!(["t2"]));
+    assert!(state["thread-workspace-root-hints"].get("t1").is_none());
+    assert!(
+        state["electron-persisted-atom-state"]
+            .get("thread-client-id-v1:local%3At1")
+            .is_none()
+    );
+}
+
+#[test]
 fn move_thread_workspace_from_paths_uses_database_that_contains_thread() {
     let tmp = tempdir().unwrap();
     let stale_db = tmp.path().join("stale.sqlite");
