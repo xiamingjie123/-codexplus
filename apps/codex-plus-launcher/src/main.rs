@@ -34,6 +34,17 @@ impl Default for LauncherHooks {
     }
 }
 
+impl LauncherHooks {
+    fn bridge_context_for(&self, debug_port: u16, app_dir: &Path) -> BridgeContext {
+        self.runtime.set_debug_port(debug_port);
+        BridgeContext::core_with_data_and_app_dir(
+            self.runtime.clone(),
+            self.data.clone(),
+            app_dir.to_path_buf(),
+        )
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -169,7 +180,7 @@ async fn activate_existing_codex_app(options: &LaunchOptions) -> anyhow::Result<
     };
     if injection_ready {
         hooks
-            .start_bridge_watchdog(options.debug_port, options.helper_port)
+            .start_bridge_watchdog(options.debug_port, options.helper_port, &app_dir)
             .await?;
         hooks.write_status("running").await;
     } else if settings.enhancements_enabled {
@@ -343,12 +354,7 @@ impl LaunchHooks for LauncherHooks {
         debug_port: u16,
         app_dir: &Path,
     ) -> anyhow::Result<Option<BridgeContext>> {
-        self.runtime.set_debug_port(debug_port);
-        Ok(Some(BridgeContext::core_with_data_and_app_dir(
-            self.runtime.clone(),
-            self.data.clone(),
-            app_dir.to_path_buf(),
-        )))
+        Ok(Some(self.bridge_context_for(debug_port, app_dir)))
     }
 
     async fn inject_bridge(
@@ -364,9 +370,20 @@ impl LaunchHooks for LauncherHooks {
         self.core.inject(debug_port, helper_port).await
     }
 
-    async fn start_bridge_watchdog(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
+    async fn start_bridge_watchdog(
+        &self,
+        debug_port: u16,
+        helper_port: u16,
+        app_dir: &Path,
+    ) -> anyhow::Result<()> {
+        let ctx = self.bridge_context_for(debug_port, app_dir);
+        let runtime = self.runtime.clone();
         self.core
-            .start_bridge_watchdog(debug_port, helper_port)
+            .start_bridge_watchdog_with_reinjector(debug_port, helper_port, move || {
+                let ctx = ctx.clone();
+                let runtime = runtime.clone();
+                async move { inject_with_context(debug_port, helper_port, ctx, runtime).await }
+            })
             .await
     }
 
@@ -904,11 +921,19 @@ mod tests {
     }
 
     #[test]
-    fn launcher_hooks_forward_runtime_watchdogs_and_computer_use_guard_methods() {
+    fn launcher_watchdog_reinjects_with_data_enabled_bridge_context() {
         let source = include_str!("main.rs");
 
         assert!(source.contains("async fn start_bridge_watchdog"));
-        assert!(source.contains(".start_bridge_watchdog(debug_port, helper_port)"));
+        assert!(source.contains("let ctx = self.bridge_context_for(debug_port, app_dir);"));
+        assert!(source.contains(".start_bridge_watchdog_with_reinjector"));
+        assert!(source.contains("inject_with_context(debug_port, helper_port, ctx, runtime)"));
+    }
+
+    #[test]
+    fn launcher_hooks_forward_computer_use_guard_methods() {
+        let source = include_str!("main.rs");
+
         assert!(source.contains("async fn ensure_computer_use_config"));
         assert!(source.contains("self.core.ensure_computer_use_config(settings).await"));
         assert!(source.contains("async fn ensure_builtin_plugin_state_after_provider_switch"));

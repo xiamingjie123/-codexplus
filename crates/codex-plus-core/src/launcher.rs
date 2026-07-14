@@ -208,6 +208,7 @@ pub trait LaunchHooks: Send + Sync {
         &self,
         _debug_port: u16,
         _helper_port: u16,
+        _app_dir: &Path,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -355,7 +356,9 @@ where
                     debug_port,
                 )
                 .await;
-                hooks.start_bridge_watchdog(debug_port, helper_port).await?;
+                hooks
+                    .start_bridge_watchdog(debug_port, helper_port, &app_dir)
+                    .await?;
             } else {
                 let degraded = launch_status(
                     "running_degraded",
@@ -498,6 +501,55 @@ impl IntoLaunchHooks for DefaultLaunchHooks {
 impl DefaultLaunchHooks {
     pub fn shared() -> Arc<dyn LaunchHooks> {
         Arc::new(Self::default())
+    }
+
+    pub async fn start_bridge_watchdog_with_reinjector<F, Fut>(
+        &self,
+        debug_port: u16,
+        helper_port: u16,
+        reinject: F,
+    ) -> anyhow::Result<()>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        let (shutdown, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            #[cfg(windows)]
+            let pet_cursor_task = tokio::spawn(run_pet_real_mouse_cursor_driver(debug_port));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    _ = interval.tick() => {
+                        let (pet_result, _) = tokio::join!(
+                            sync_pet_real_mouse_overlay(debug_port, helper_port),
+                            check_and_reinject_bridge_with(
+                                debug_port,
+                                helper_port,
+                                &reinject,
+                            ),
+                        );
+                        record_pet_overlay_sync_result(debug_port, helper_port, pet_result);
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                pet_cursor_task.abort();
+                let _ = pet_cursor_task.await;
+            }
+        });
+        if let Some(runtime) = self
+            .bridge_watchdog
+            .lock()
+            .await
+            .replace(BridgeWatchdogRuntime { shutdown, task })
+        {
+            let _ = runtime.shutdown.send(());
+            let _ = runtime.task.await;
+        }
+        Ok(())
     }
 }
 
@@ -893,40 +945,16 @@ impl LaunchHooks for DefaultLaunchHooks {
     async fn inject(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
         retry_injection(debug_port, helper_port).await
     }
-    async fn start_bridge_watchdog(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
-        let (shutdown, mut shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(async move {
-            #[cfg(windows)]
-            let pet_cursor_task = tokio::spawn(run_pet_real_mouse_cursor_driver(debug_port));
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-            loop {
-                tokio::select! {
-                    _ = &mut shutdown_rx => break,
-                    _ = interval.tick() => {
-                        let (pet_result, _) = tokio::join!(
-                            sync_pet_real_mouse_overlay(debug_port, helper_port),
-                            check_and_reinject_bridge(debug_port, helper_port),
-                        );
-                        record_pet_overlay_sync_result(debug_port, helper_port, pet_result);
-                    }
-                }
-            }
-            #[cfg(windows)]
-            {
-                pet_cursor_task.abort();
-                let _ = pet_cursor_task.await;
-            }
-        });
-        if let Some(runtime) = self
-            .bridge_watchdog
-            .lock()
-            .await
-            .replace(BridgeWatchdogRuntime { shutdown, task })
-        {
-            let _ = runtime.shutdown.send(());
-            let _ = runtime.task.await;
-        }
-        Ok(())
+    async fn start_bridge_watchdog(
+        &self,
+        debug_port: u16,
+        helper_port: u16,
+        _app_dir: &Path,
+    ) -> anyhow::Result<()> {
+        self.start_bridge_watchdog_with_reinjector(debug_port, helper_port, move || {
+            retry_injection(debug_port, helper_port)
+        })
+        .await
     }
 
     async fn start_computer_use_guard_watchdog(
@@ -1955,6 +1983,21 @@ async fn retry_injection(debug_port: u16, helper_port: u16) -> anyhow::Result<()
 }
 
 pub async fn check_and_reinject_bridge(debug_port: u16, helper_port: u16) -> bool {
+    check_and_reinject_bridge_with(debug_port, helper_port, &|| {
+        retry_injection(debug_port, helper_port)
+    })
+    .await
+}
+
+async fn check_and_reinject_bridge_with<F, Fut>(
+    debug_port: u16,
+    helper_port: u16,
+    reinject: &F,
+) -> bool
+where
+    F: Fn() -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+{
     let healthy = match bridge_health_ok(debug_port).await {
         Ok(healthy) => healthy,
         Err(error) => {
@@ -1973,6 +2016,18 @@ pub async fn check_and_reinject_bridge(debug_port: u16, helper_port: u16) -> boo
         return false;
     }
 
+    reinject_unhealthy_bridge_with(debug_port, helper_port, reinject).await
+}
+
+async fn reinject_unhealthy_bridge_with<F, Fut>(
+    debug_port: u16,
+    helper_port: u16,
+    reinject: &F,
+) -> bool
+where
+    F: Fn() -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+{
     let _ = crate::diagnostic_log::append_diagnostic_log(
         "bridge.reinject_start",
         serde_json::json!({
@@ -1980,7 +2035,7 @@ pub async fn check_and_reinject_bridge(debug_port: u16, helper_port: u16) -> boo
             "helper_port": helper_port
         }),
     );
-    match retry_injection(debug_port, helper_port).await {
+    match reinject().await {
         Ok(()) => {
             let _ = crate::diagnostic_log::append_diagnostic_log(
                 "bridge.reinject_ok",
@@ -2666,6 +2721,26 @@ fn activate_packaged_app_blocking(app_user_model_id: &str, arguments: &str) -> a
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unhealthy_bridge_uses_supplied_reinjector() {
+        let called = Arc::new(AtomicBool::new(false));
+        let reinject = {
+            let called = called.clone();
+            move || {
+                let called = called.clone();
+                async move {
+                    called.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+        };
+
+        let reinjected = reinject_unhealthy_bridge_with(9229, 57321, &reinject).await;
+
+        assert!(reinjected);
+        assert!(called.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn post_launch_guard_stops_after_stable_ready_artifacts() {

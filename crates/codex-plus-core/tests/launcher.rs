@@ -1662,6 +1662,7 @@ impl LaunchHooks for FakeHooks {
         &self,
         _debug_port: u16,
         _helper_port: u16,
+        _app_dir: &Path,
     ) -> anyhow::Result<()> {
         Ok(())
     }

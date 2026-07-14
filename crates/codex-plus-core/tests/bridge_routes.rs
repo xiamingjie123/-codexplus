@@ -1494,7 +1494,12 @@ impl LaunchHooks for ContextHooks {
         Ok(())
     }
 
-    async fn start_bridge_watchdog(&self, debug_port: u16, helper_port: u16) -> anyhow::Result<()> {
+    async fn start_bridge_watchdog(
+        &self,
+        debug_port: u16,
+        helper_port: u16,
+        _app_dir: &std::path::Path,
+    ) -> anyhow::Result<()> {
         self.event(format!("watchdog:{debug_port}:{helper_port}"));
         Ok(())
     }
