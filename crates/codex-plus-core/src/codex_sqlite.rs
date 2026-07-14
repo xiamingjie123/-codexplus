@@ -35,6 +35,18 @@ pub fn codex_session_db_paths_from_home(home: &Path) -> Vec<PathBuf> {
     paths
 }
 
+pub fn codex_listable_session_db_paths_from_home(home: &Path) -> Vec<PathBuf> {
+    let mut paths = codex_sqlite_dir_session_dbs(home)
+        .into_iter()
+        .filter(|path| has_listable_session_table(path))
+        .collect::<Vec<_>>();
+    let legacy = legacy_state_db_path(home);
+    if has_listable_session_table(&legacy) && !paths.iter().any(|path| path == &legacy) {
+        paths.push(legacy);
+    }
+    paths
+}
+
 /// codex 客户端日志数据库路径（固定文件名）。
 pub fn codex_logs_db_path_from_home(home: &Path) -> PathBuf {
     home.join("logs_2.sqlite")
@@ -102,6 +114,12 @@ fn has_session_table(path: &Path) -> bool {
     ]
     .iter()
     .any(|table| sqlite_has_table(path, table))
+}
+
+fn has_listable_session_table(path: &Path) -> bool {
+    ["threads", "automation_runs"]
+        .iter()
+        .any(|table| sqlite_has_table(path, table))
 }
 
 fn sqlite_has_table(path: &Path, table: &str) -> bool {

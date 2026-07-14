@@ -1,4 +1,7 @@
-use codex_plus_core::codex_sqlite::sanitize_historical_model_suffixes;
+use codex_plus_core::codex_sqlite::{
+    codex_listable_session_db_paths_from_home, codex_session_db_paths_from_home,
+    sanitize_historical_model_suffixes,
+};
 use rusqlite::Connection;
 
 fn create_threads_table(conn: &Connection) {
@@ -11,6 +14,78 @@ fn create_threads_table(conn: &Connection) {
         [],
     )
     .unwrap();
+}
+
+#[test]
+fn listable_session_db_paths_include_supported_session_schemas() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".codex");
+    let sqlite_dir = home.join("sqlite");
+    std::fs::create_dir_all(&sqlite_dir).unwrap();
+    let threads_path = sqlite_dir.join("state_5.sqlite");
+    let automation_path = sqlite_dir.join("automation_1.sqlite");
+    Connection::open(&threads_path)
+        .unwrap()
+        .execute("CREATE TABLE threads (id TEXT PRIMARY KEY)", [])
+        .unwrap();
+    Connection::open(&automation_path)
+        .unwrap()
+        .execute(
+            "CREATE TABLE automation_runs (thread_id TEXT PRIMARY KEY)",
+            [],
+        )
+        .unwrap();
+
+    let paths = codex_listable_session_db_paths_from_home(&home);
+
+    assert_eq!(paths.len(), 2);
+    assert!(paths.contains(&threads_path));
+    assert!(paths.contains(&automation_path));
+}
+
+#[test]
+fn listable_session_db_paths_exclude_goals_and_memories_databases() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".codex");
+    let sqlite_dir = home.join("sqlite");
+    std::fs::create_dir_all(&sqlite_dir).unwrap();
+    let goals_path = sqlite_dir.join("goals_1.sqlite");
+    let memories_path = sqlite_dir.join("memories_1.sqlite");
+    Connection::open(&goals_path)
+        .unwrap()
+        .execute("CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY)", [])
+        .unwrap();
+    Connection::open(&memories_path)
+        .unwrap()
+        .execute("CREATE TABLE messages (id TEXT PRIMARY KEY)", [])
+        .unwrap();
+
+    let paths = codex_listable_session_db_paths_from_home(&home);
+
+    assert!(paths.is_empty());
+}
+
+#[test]
+fn broad_session_db_discovery_keeps_auxiliary_databases() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".codex");
+    let sqlite_dir = home.join("sqlite");
+    std::fs::create_dir_all(&sqlite_dir).unwrap();
+    let goals_path = sqlite_dir.join("goals_1.sqlite");
+    let memories_path = sqlite_dir.join("memories_1.sqlite");
+    Connection::open(&goals_path)
+        .unwrap()
+        .execute("CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY)", [])
+        .unwrap();
+    Connection::open(&memories_path)
+        .unwrap()
+        .execute("CREATE TABLE messages (id TEXT PRIMARY KEY)", [])
+        .unwrap();
+
+    let paths = codex_session_db_paths_from_home(&home);
+
+    assert!(paths.contains(&goals_path));
+    assert!(paths.contains(&memories_path));
 }
 
 #[test]

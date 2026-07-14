@@ -649,7 +649,7 @@ pub fn dismiss_pending_provider_import() -> CommandResult<PendingProviderImportP
 #[tauri::command]
 pub fn list_local_sessions() -> CommandResult<LocalSessionsPayload> {
     let home = codex_plus_core::codex_sqlite::default_codex_home_dir();
-    let db_paths = codex_plus_core::codex_sqlite::codex_session_db_paths_from_home(&home);
+    let db_paths = codex_plus_core::codex_sqlite::codex_listable_session_db_paths_from_home(&home);
     let mut sessions = Vec::new();
     let mut errors = Vec::new();
     for db_path in &db_paths {
@@ -3748,6 +3748,40 @@ mod tests {
             result.payload.sessions[0].db_path,
             legacy_db.to_string_lossy()
         );
+    }
+
+    #[test]
+    fn list_local_sessions_ignores_auxiliary_sqlite_databases() {
+        let _lock = test_env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let previous_codex_home = std::env::var_os("CODEX_HOME");
+        let codex_home = temp.path().join("codex-home");
+        let sqlite_dir = codex_home.join("sqlite");
+        std::fs::create_dir_all(&sqlite_dir).unwrap();
+        let current_db = sqlite_dir.join("state_5.sqlite");
+        let goals_db = sqlite_dir.join("goals_1.sqlite");
+        let memories_db = sqlite_dir.join("memories_1.sqlite");
+        create_minimal_thread_db(&current_db, "t1", "Current Session", 100);
+        rusqlite::Connection::open(&goals_db)
+            .unwrap()
+            .execute("CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY)", [])
+            .unwrap();
+        rusqlite::Connection::open(&memories_db)
+            .unwrap()
+            .execute("CREATE TABLE messages (id TEXT PRIMARY KEY)", [])
+            .unwrap();
+
+        unsafe {
+            std::env::set_var("CODEX_HOME", &codex_home);
+        }
+        let result = list_local_sessions();
+        restore_codex_home(previous_codex_home);
+
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.payload.sessions.len(), 1);
+        assert_eq!(result.payload.sessions[0].id, "t1");
+        assert_eq!(result.payload.db_paths.len(), 1);
+        assert_eq!(result.payload.db_paths[0], current_db.to_string_lossy());
     }
 
     #[test]
