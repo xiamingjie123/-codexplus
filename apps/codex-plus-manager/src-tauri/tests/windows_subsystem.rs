@@ -199,6 +199,23 @@ fn github_release_workflow_uploads_static_latest_json() {
 }
 
 #[test]
+fn github_release_workflow_creates_release_for_version_tags() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+        .unwrap()
+        .join(".github/workflows/release-assets.yml");
+    let workflow = std::fs::read_to_string(&workflow).expect("read release assets workflow");
+
+    assert!(workflow.contains("- \"v*\""));
+    assert!(workflow.contains("ensure-release:"));
+    assert!(workflow.contains("gh release create \"$RELEASE_TAG\""));
+    assert!(workflow.contains("needs: ensure-release"));
+}
+
+#[test]
 fn relay_settings_keeps_profile_config_and_auth_files_isolated() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let app_tsx = manifest_dir.parent().unwrap().join("src/App.tsx");
