@@ -1,16 +1,19 @@
 use codex_plus_core::protocol_proxy::{
-    ChatSseToResponsesConverter, chat_completion_to_response,
-    chat_completion_to_response_with_request, chat_completions_url, chat_sse_to_responses_sse,
-    chat_sse_to_responses_sse_with_request, is_chat_completions_proxy_path, is_models_proxy_path,
-    is_responses_proxy_path, models_url, open_chat_completions_proxy_request,
-    open_models_proxy_request, open_responses_proxy_request,
+    ChatSseToResponsesConverter, analyze_images_with_vl, apply_vl_with_fallback,
+    chat_completion_to_response, chat_completion_to_response_with_request, chat_completions_url,
+    chat_sse_to_responses_sse, chat_sse_to_responses_sse_with_request,
+    is_chat_completions_proxy_path, is_models_proxy_path, is_responses_proxy_path,
+    model_supports_image, model_supports_reasoning, models_url,
+    open_chat_completions_proxy_request, open_models_proxy_request, open_responses_proxy_request,
     open_responses_proxy_request_with_settings, responses_error_from_upstream,
-    responses_to_chat_completions, send_upstream_request_with_header_timeout,
-    upstream_header_timeout, upstream_http_client, upstream_stream_header_timeout,
+    responses_to_chat_completions, responses_to_chat_completions_with_image_support,
+    send_upstream_request_with_header_timeout, strip_input_images_in_place,
+    strip_reasoning_in_place, upstream_header_timeout, upstream_http_client,
+    upstream_request_parts_with_image_decision, upstream_stream_header_timeout,
 };
 use codex_plus_core::settings::{
     AggregateRelayMember, AggregateRelayProfile, AggregateRelayStrategy, BackendSettings,
-    RelayMode, RelayProfile,
+    RelayMode, RelayProfile, VisionRelayConfig,
 };
 use serde_json::json;
 use std::io::{Read, Write};
@@ -742,6 +745,1071 @@ fn responses_input_replays_apply_patch_custom_history_as_proxy_tool() {
 }
 
 #[test]
+fn responses_request_preserves_input_image_for_multimodal_model() {
+    // 路径 A：当 supports_image = true（默认多模态模型）时，input_image 应正常转成 image_url
+    let converted = responses_to_chat_completions_with_image_support(
+        json!({
+            "model": "gpt-5.5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "看下这张图" },
+                        { "type": "input_image", "image_url": "https://example.com/cat.png" }
+                    ]
+                }
+            ]
+        }),
+        true,
+    )
+    .unwrap();
+
+    // 验证：content 应为数组（包含 image_url）
+    let content = &converted["messages"][0]["content"];
+    assert!(
+        content.is_array(),
+        "supports_image=true 时 content 应为数组以保留图片，实际为: {content}"
+    );
+    let parts = content.as_array().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0]["type"], "text");
+    assert_eq!(parts[0]["text"], "看下这张图");
+    assert_eq!(parts[1]["type"], "image_url");
+    assert_eq!(parts[1]["image_url"]["url"], "https://example.com/cat.png");
+}
+
+#[test]
+fn responses_request_strips_input_image_for_text_only_model() {
+    // 路径 A：MVP 核心场景 — 当 supports_image = false（纯文本模型）时，
+    // input_image 应被静默移除，content 自动坍缩为纯文本字符串。
+    // 这是修复 issue #1194 的关键测试。
+    let converted = responses_to_chat_completions_with_image_support(
+        json!({
+            "model": "deepseek-v4-pro",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "看下这张图" },
+                        { "type": "input_image", "image_url": "https://example.com/cat.png" }
+                    ]
+                }
+            ]
+        }),
+        false,
+    )
+    .unwrap();
+
+    // 验证：content 应坍缩为纯文本字符串，不含 image_url
+    let content = &converted["messages"][0]["content"];
+    assert!(
+        content.is_string(),
+        "supports_image=false 时 content 应坍缩为字符串，实际为: {content}"
+    );
+    assert_eq!(content.as_str().unwrap(), "看下这张图");
+
+    // 验证：消息中不包含 image_url 任何痕迹
+    let serialized = serde_json::to_string(&converted).unwrap();
+    assert!(
+        !serialized.contains("image_url"),
+        "纯文本模式转换结果不应包含 image_url 字段"
+    );
+}
+
+#[test]
+fn responses_request_strips_input_image_alone_leaves_placeholder_text() {
+    // 边界：用户只发了图片，没发文字，strip 后 content 应为空字符串而不是被丢弃
+    let converted = responses_to_chat_completions_with_image_support(
+        json!({
+            "model": "deepseek-v4-pro",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_image", "image_url": "https://example.com/cat.png" }
+                    ]
+                }
+            ]
+        }),
+        false,
+    )
+    .unwrap();
+
+    // content 应是空字符串（不报错、不丢消息）
+    let content = &converted["messages"][0]["content"];
+    assert!(
+        content.is_string(),
+        "纯图片被 strip 后 content 应为字符串，实际为: {content}"
+    );
+    assert_eq!(content.as_str().unwrap(), "");
+}
+
+#[test]
+fn responses_request_preserves_input_image_with_object_url() {
+    // 多模态路径上 image_url 也可能是对象形式（{url, detail}），需保证两种格式都通过
+    let converted = responses_to_chat_completions_with_image_support(
+        json!({
+            "model": "gpt-5.5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": { "url": "data:image/png;base64,abc", "detail": "high" }
+                        }
+                    ]
+                }
+            ]
+        }),
+        true,
+    )
+    .unwrap();
+
+    let parts = converted["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0]["type"], "image_url");
+    assert_eq!(parts[0]["image_url"]["url"], "data:image/png;base64,abc");
+    assert_eq!(parts[0]["image_url"]["detail"], "high");
+}
+
+#[test]
+fn model_supports_image_returns_true_when_strip_images_disabled() {
+    let mut profile = RelayProfile::default();
+    profile.strip_images = false;
+    assert!(model_supports_image(&profile, "deepseek-v4-pro"));
+    assert!(model_supports_image(&profile, "gpt-5.5"));
+}
+
+#[test]
+fn model_supports_image_returns_false_when_strip_images_enabled() {
+    let mut profile = RelayProfile::default();
+    profile.strip_images = true;
+    assert!(!model_supports_image(&profile, "deepseek-v4-pro"));
+    assert!(!model_supports_image(&profile, "gpt-5.5"));
+}
+
+// ==========================================================================
+// 路径 A 进阶 + 路径 C 进阶：per-model 图片能力 map
+//
+// spec 进阶方案：RelayProfile.modelImageSupport 存 JSON map
+// { "deepseek-v4-pro": false, "gpt-5.5": true }，覆盖 stripImages 的全局开关，
+// 让同供应商下纯文本模型和视觉模型可共存。
+// 查询优先级：map 命中 → 用 map；map 未命中 → 走 stripImages 默认值。
+// ==========================================================================
+
+#[test]
+fn model_supports_image_uses_per_model_map_when_configured() {
+    // map 明确写 deepseek-v4-pro: false，stripImages=false 也不应被 strip
+    let mut profile = RelayProfile::default();
+    profile.strip_images = false;
+    profile.model_image_support = r#"{"deepseek-v4-pro": false}"#.to_string();
+    assert!(!model_supports_image(&profile, "deepseek-v4-pro"));
+}
+
+#[test]
+fn model_supports_image_per_model_map_overrides_strip_images() {
+    // map 写 deepseek=true, gpt=false，strip_images=true 应被覆盖
+    let mut profile = RelayProfile::default();
+    profile.strip_images = true;
+    profile.model_image_support = r#"{"deepseek-v4-pro": true, "gpt-5.5": false}"#.to_string();
+    assert!(
+        model_supports_image(&profile, "deepseek-v4-pro"),
+        "map 显式 true 应覆盖 strip_images=true"
+    );
+    assert!(
+        !model_supports_image(&profile, "gpt-5.5"),
+        "map 显式 false 应被尊重"
+    );
+}
+
+#[test]
+fn model_supports_image_per_model_map_defaults_to_support_when_map_nonempty_and_model_missing() {
+    // per-model map 非空时：未列出的模型默认「支持图片」，
+    // 让视觉模型（kimi / minimax）与纯文本模型（map 里标 false 的）在同一中转共存。
+    // 用户反馈：stripImages=true + 非空 map 时，kimi（不在 map）被误 strip，
+    // 必须取消 stripImages 才正常。改成 map 非空时 strip_images 不再作用于未列出模型。
+    let mut profile = RelayProfile::default();
+    profile.strip_images = true;
+    profile.model_image_support = r#"{"deepseek-v4-flash": false}"#.to_string();
+    // 未列出的视觉模型即使在 strip_images=true 时也应支持图片
+    assert!(
+        model_supports_image(&profile, "kimi-k2.6"),
+        "map 非空时未列出模型应默认支持图片，不受 strip_images 影响"
+    );
+    assert!(model_supports_image(&profile, "minimax-m3"), "minimax 同理");
+    // map 里显式标 false 的纯文本模型仍应被 strip
+    assert!(
+        !model_supports_image(&profile, "deepseek-v4-flash"),
+        "map 显式 false 仍应被尊重"
+    );
+
+    // strip_images=false 时同样：未列出 -> 支持
+    profile.strip_images = false;
+    assert!(model_supports_image(&profile, "kimi-k2.6"));
+}
+
+#[test]
+fn model_supports_image_empty_map_falls_back_to_strip_images() {
+    // map 为空时：退化为 profile 级 strip_images 开关（MVP 行为，向后兼容）
+    let mut profile = RelayProfile::default();
+    profile.strip_images = true;
+    profile.model_image_support = String::new();
+    assert!(!model_supports_image(&profile, "deepseek-v4-pro"));
+
+    profile.strip_images = false;
+    assert!(model_supports_image(&profile, "deepseek-v4-pro"));
+}
+
+#[test]
+fn model_supports_image_matches_case_insensitively() {
+    // 模型名大小写匹配：Codex 发送的 model 名可能与 map key 大小写不一致
+    // （如 map 里 "GLM-5.2"，Codex 发 "glm-5.2"）。查询应不区分大小写。
+    let mut profile = RelayProfile::default();
+    profile.model_image_support = r#"{"GLM-5.2": false, "deepseek-v4-flash": false}"#.to_string();
+    assert!(
+        !model_supports_image(&profile, "glm-5.2"),
+        "小写查询应匹配大写 key"
+    );
+    assert!(
+        !model_supports_image(&profile, "GLM-5.2"),
+        "精确匹配仍应工作"
+    );
+    assert!(
+        !model_supports_image(&profile, "DeepSeek-V4-Flash"),
+        "大小写混写也应匹配"
+    );
+}
+
+#[test]
+fn model_supports_image_per_model_map_handles_empty_and_invalid_gracefully() {
+    // 空 map / 非法 JSON 不能崩，回落到 strip_images
+    let mut profile = RelayProfile::default();
+    profile.strip_images = true;
+    profile.model_image_support = String::new();
+    assert!(!model_supports_image(&profile, "deepseek-v4-pro"));
+
+    profile.model_image_support = "not json".to_string();
+    assert!(!model_supports_image(&profile, "deepseek-v4-pro"));
+
+    profile.model_image_support = r#"{"deepseek-v4-pro": true}"#.to_string();
+    assert!(model_supports_image(&profile, "deepseek-v4-pro"));
+}
+
+// ==========================================================================
+// 路径 A 续：Responses 透传分支的 input_image 过滤
+// (修复 spec 已知限制：透传路径不 strip)
+//
+// 上游使用 Responses API（DeepSeek/Ark 等）时，request_json 原样转发。
+// 当 stripImages=true 时，必须在转发前移除 input_image 块，否则纯文本
+// 模型上游会返回 "Model do not support image input"。
+// ==========================================================================
+
+#[test]
+fn responses_passthrough_preserves_input_image_for_multimodal_model() {
+    // supports_image=true：input_image 必须原样保留（透传语义）
+    let mut body = json!({
+        "model": "gpt-5.5",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "看下这张图" },
+                    { "type": "input_image", "image_url": "https://example.com/cat.png" }
+                ]
+            }
+        ]
+    });
+    strip_input_images_in_place(&mut body, true);
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(serialized.contains("input_image"));
+    assert!(serialized.contains("https://example.com/cat.png"));
+}
+
+#[test]
+fn responses_passthrough_strips_input_image_for_text_only_model() {
+    // 支持 #1194 的 Responses 透传场景：纯文本模型必须不再看到 input_image
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "总结这个图片" },
+                    { "type": "input_image", "image_url": "https://example.com/cat.png" }
+                ]
+            }
+        ]
+    });
+    strip_input_images_in_place(&mut body, false);
+    let content = &body["input"][0]["content"];
+    let parts = content
+        .as_array()
+        .expect("content 应保持为数组（仅移除 input_image）");
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0]["type"], "input_text");
+    assert_eq!(parts[0]["text"], "总结这个图片");
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(
+        !serialized.contains("input_image"),
+        "strip 后不得残留 input_image 字段"
+    );
+    assert!(!serialized.contains("cat.png"), "strip 后不得残留图片 URL");
+}
+
+#[test]
+fn responses_passthrough_keeps_other_part_types_intact() {
+    // input_image 之外的所有 part 类型必须原样保留
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "你好" },
+                    { "type": "output_text", "text": "上一轮回复" },
+                    { "type": "refusal", "refusal": "已拒绝" },
+                    { "type": "input_image", "image_url": "https://x.com/a.png" }
+                ]
+            }
+        ]
+    });
+    strip_input_images_in_place(&mut body, false);
+    let parts = body["input"][0]["content"].as_array().unwrap();
+    let types: Vec<&str> = parts
+        .iter()
+        .map(|p| {
+            p.get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+        })
+        .collect();
+    assert_eq!(types, vec!["input_text", "output_text", "refusal"]);
+}
+
+#[test]
+fn responses_passthrough_handles_string_input_and_content_gracefully() {
+    // 边界：input 是字符串，或 content 是字符串（spec 历史：只见过数组），
+    // 不能因 strip 调用崩溃
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": "纯文本提问",
+        "instructions": "你是助手"
+    });
+    strip_input_images_in_place(&mut body, false);
+    assert_eq!(body["input"], "纯文本提问");
+    assert_eq!(body["instructions"], "你是助手");
+
+    // content 为字符串的旧式 message
+    let mut body2 = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            { "type": "message", "role": "user", "content": "再问一个" }
+        ]
+    });
+    strip_input_images_in_place(&mut body2, false);
+    assert_eq!(body2["input"][0]["content"], "再问一个");
+}
+
+#[test]
+fn responses_passthrough_strips_image_only_message_leaves_empty_array() {
+    // 边界：整条消息只有一张图，strip 后 content 数组为空。
+    // 这里不强行改成空字符串（那是 ChatCompletions 转换的逻辑），
+    // Responses 透传保持空数组即可，上游允许空 content。
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_image", "image_url": "https://x.com/a.png" }
+                ]
+            }
+        ]
+    });
+    strip_input_images_in_place(&mut body, false);
+    let content = &body["input"][0]["content"];
+    assert!(content.is_array());
+    assert_eq!(content.as_array().unwrap().len(), 0);
+}
+
+// ==========================================================================
+// 路径 A 续：Responses 透传剥离 reasoning（不支持推理的模型）
+//
+// 用户反馈：kimi-2.6 在 Ark 走 Responses 透传，Codex 默认带 reasoning 参数，
+// Ark 的 kimi 端点拒绝 "reasoning is not supported by current model"。
+// 与 input_image 同类：部分模型不支持的字段，透传前需剥离。
+// per-model map 控制（同 modelImageSupport 模式），无 profile 级开关，
+// 避免和 stripImages 一样的「全局开关压过 per-model」冲突。
+// ==========================================================================
+
+#[test]
+fn model_supports_reasoning_defaults_to_true_when_map_empty() {
+    // 空 map / 未配置 -> 默认支持 reasoning（不误伤推理模型）
+    let profile = RelayProfile::default();
+    assert!(model_supports_reasoning(&profile, "minimax-m3"));
+    assert!(model_supports_reasoning(&profile, "deepseek-v4-flash"));
+}
+
+#[test]
+fn model_supports_reasoning_uses_per_model_map() {
+    let mut profile = RelayProfile::default();
+    profile.model_reasoning_support = r#"{"kimi-k2.6": false}"#.to_string();
+    // map 命中 false -> 不支持
+    assert!(!model_supports_reasoning(&profile, "kimi-k2.6"));
+    // 未列出 -> 默认支持（不误伤 minimax 等推理模型）
+    assert!(model_supports_reasoning(&profile, "minimax-m3"));
+    assert!(model_supports_reasoning(&profile, "deepseek-v4-flash"));
+}
+
+#[test]
+fn model_supports_reasoning_matches_case_insensitively() {
+    let mut profile = RelayProfile::default();
+    profile.model_reasoning_support = r#"{"Kimi-K2.6": false}"#.to_string();
+    assert!(!model_supports_reasoning(&profile, "kimi-k2.6"));
+    assert!(!model_supports_reasoning(&profile, "KIMI-K2.6"));
+}
+
+#[test]
+fn strip_reasoning_in_place_removes_reasoning_when_unsupported() {
+    let mut body = json!({
+        "model": "kimi-k2.6",
+        "reasoning": { "effort": "high" },
+        "input": [
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }
+        ]
+    });
+    strip_reasoning_in_place(&mut body, false);
+    assert!(body.get("reasoning").is_none(), "reasoning 应被移除");
+    // 其余字段不动
+    assert_eq!(body["model"], "kimi-k2.6");
+    assert_eq!(body["input"][0]["content"][0]["text"], "hi");
+}
+
+#[test]
+fn strip_reasoning_in_place_preserves_reasoning_when_supported() {
+    let mut body = json!({
+        "model": "minimax-m3",
+        "reasoning": { "effort": "high" },
+        "input": []
+    });
+    strip_reasoning_in_place(&mut body, true);
+    assert!(
+        body.get("reasoning").is_some(),
+        "支持推理时 reasoning 应保留"
+    );
+    assert_eq!(body["reasoning"]["effort"], "high");
+}
+
+#[test]
+fn strip_reasoning_in_place_noop_when_reasoning_absent() {
+    let mut body = json!({
+        "model": "kimi-k2.6",
+        "input": [{ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }]
+    });
+    strip_reasoning_in_place(&mut body, false);
+    // 无 reasoning 字段时不崩，body 不变
+    assert!(body.get("reasoning").is_none());
+    assert_eq!(body["input"][0]["content"][0]["text"], "hi");
+}
+
+#[test]
+fn upstream_responses_passthrough_preserves_images_and_reasoning_as_is_for_text_only_model()
+ {
+    // 集成：Responses 透传分支不剥离任何内容，原样转发。
+    // 即使模型不支持图片/推理，Response 格式也不干预。
+    let mut profile = RelayProfile::default();
+    profile.protocol = codex_plus_core::settings::RelayProtocol::Responses;
+    profile.strip_images = false;
+    profile.model_image_support = r#"{"kimi-k2.6": false}"#.to_string();
+    profile.model_reasoning_support = r#"{"kimi-k2.6": false}"#.to_string();
+
+    let body = json!({
+        "model": "kimi-k2.6",
+        "reasoning": { "effort": "high" },
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": [
+                { "type": "input_text", "text": "看这张图" },
+                { "type": "input_image", "image_url": "https://x.com/a.png" }
+            ]
+        }]
+    });
+
+    let (endpoint, upstream_body, wire_api) =
+        upstream_request_parts_with_image_decision(&profile, body, false).unwrap();
+
+    assert!(
+        endpoint.ends_with("/responses"),
+        "Responses 透传 endpoint 应以 /responses 结尾"
+    );
+    assert_eq!(
+        wire_api,
+        codex_plus_core::protocol_proxy::UpstreamWireApi::Responses
+    );
+
+    let serialized = serde_json::to_string(&upstream_body).unwrap();
+    // Response 格式纯透传，图片和 reasoning 都保留原样
+    assert!(serialized.contains("input_image"), "Response 格式应保留 input_image");
+    assert!(serialized.contains("a.png"), "Response 格式应保留图片 URL");
+    assert!(serialized.contains("reasoning"), "Response 格式应保留 reasoning");
+    assert!(serialized.contains("看这张图"), "input_text 应保留");
+}
+
+#[test]
+fn upstream_responses_passthrough_preserves_images_and_reasoning_for_full_capability_model() {
+    // 反向回归：支持图片 + 推理的模型（如 minimax-m3），两者都保留。
+    let mut profile = RelayProfile::default();
+    profile.protocol = codex_plus_core::settings::RelayProtocol::Responses;
+    profile.model_image_support = r#"{"kimi-k2.6": false}"#.to_string();
+    profile.model_reasoning_support = r#"{"kimi-k2.6": false}"#.to_string();
+
+    let body = json!({
+        "model": "minimax-m3",
+        "reasoning": { "effort": "high" },
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": [
+                { "type": "input_text", "text": "看这张图" },
+                { "type": "input_image", "image_url": "https://x.com/a.png" }
+            ]
+        }]
+    });
+
+    let (_endpoint, upstream_body, _wire_api) =
+        upstream_request_parts_with_image_decision(&profile, body, true).unwrap();
+
+    let serialized = serde_json::to_string(&upstream_body).unwrap();
+    assert!(
+        serialized.contains("input_image"),
+        "视觉模型的 input_image 应保留"
+    );
+    assert!(
+        serialized.contains("reasoning"),
+        "推理模型的 reasoning 应保留"
+    );
+}
+// ==========================================================================
+// 路径 B1：analyze_images_with_vl — 视觉模型中转
+//
+// spec 第四章路径 B1：纯文本模型请求中遇到 input_image 时，
+// 调 VL API 拿文字描述，替换为 input_text 后再走协议转换。
+// 测试用本地 mock HTTP server 模拟 VL 上游。
+// ==========================================================================
+
+/// 启动一个 mock VL 服务端：收到请求后回写 `response_body`，并把收到的请求体存到 `captured`。
+async fn mock_vl_server(
+    listener: tokio::net::TcpListener,
+    response_body: &'static str,
+    captured: std::sync::Arc<std::sync::Mutex<String>>,
+) {
+    let (mut stream, _) = listener.accept().await.unwrap();
+    // 先读 header 直到 \r\n\r\n
+    let mut header_buf = Vec::with_capacity(512);
+    let mut body_len: Option<usize> = None;
+    let mut tmp = [0u8; 1];
+    loop {
+        let n = stream.read(&mut tmp).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        header_buf.push(tmp[0]);
+        if header_buf.ends_with(b"\r\n\r\n") {
+            break;
+        }
+        if header_buf.len() > 16384 {
+            break;
+        }
+    }
+    let header_str = String::from_utf8_lossy(&header_buf).to_string();
+    if let Some(cl_line) = header_str
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+    {
+        body_len = cl_line
+            .split(':')
+            .nth(1)
+            .and_then(|s| s.trim().parse::<usize>().ok());
+    }
+    // 读 body 精确字节数
+    let mut body_buf = Vec::new();
+    if let Some(len) = body_len {
+        while body_buf.len() < len {
+            let need = len - body_buf.len();
+            let mut chunk = vec![0u8; need.min(4096)];
+            let n = stream.read(&mut chunk).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            body_buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+    *captured.lock().unwrap() = String::from_utf8_lossy(&body_buf).to_string();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        response_body.len(),
+        response_body,
+    );
+    stream.write_all(response.as_bytes()).await.unwrap();
+    let _ = stream.shutdown().await;
+}
+
+fn vl_response(description: &str) -> String {
+    format!(
+        r#"{{"id":"vl-1","object":"chat.completion","model":"qwen-vl-plus","choices":[{{"index":0,"message":{{"role":"assistant","content":"{}"}},"finish_reason":"stop"}}]}}"#,
+        description.replace('"', "\\\"")
+    )
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_is_noop_when_disabled() {
+    // VL 关闭时直接返回，不发任何 HTTP 请求
+    let mut config = VisionRelayConfig::default();
+    config.enabled = false;
+    config.model = "qwen-vl-plus".to_string();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://x.com/a.png"}]}]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    // input_image 必须保留（未启用 VL）
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(serialized.contains("input_image"), "VL 关闭时不应改动 body");
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_is_noop_when_no_images() {
+    // 没有 input_image 时不调 VL
+    let mut config = VisionRelayConfig::default();
+    config.enabled = true;
+    config.model = "qwen-vl-plus".to_string();
+    // 故意指向无效端口 —— 如果函数错误地发起调用，会失败
+    config.base_url = "http://127.0.0.1:1/v1".to_string();
+    config.api_key = "sk-test".to_string();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [{"type":"message","role":"user","content":[{"type":"input_text","text":"纯文本问题"}]}]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    assert_eq!(body["input"][0]["content"][0]["text"], "纯文本问题");
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_replaces_input_image_with_description() {
+    // 核心场景：input_image 被 VL 描述替换为 input_text
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured_clone = captured.clone();
+    let response = vl_response("图片中是一只橘猫");
+    let server = tokio::spawn(async move {
+        mock_vl_server(
+            listener,
+            Box::leak(response.into_boxed_str()),
+            captured_clone,
+        )
+        .await;
+    });
+
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "qwen-vl-plus".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        protocol: codex_plus_core::settings::RelayProtocol::ChatCompletions,
+        max_tokens: 256,
+        context_window: 0,
+    };
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_text","text":"看下这张图"},
+                {"type":"input_image","image_url":"https://example.com/cat.png"}
+            ]}
+        ]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    // 验证：input_image 已被替换为 input_text，文字内容是 VL 返回的描述
+    let parts = body["input"][0]["content"].as_array().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0]["type"], "input_text");
+    assert_eq!(parts[0]["text"], "看下这张图");
+    assert_eq!(parts[1]["type"], "input_text");
+    assert!(parts[1]["text"].as_str().unwrap().contains("橘猫"));
+    // 不应残留 image_url
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(
+        !serialized.contains("image_url"),
+        "strip 后不应残留 image_url"
+    );
+    // VL 收到的请求体应包含图片 URL
+    let vl_request_body = captured.lock().unwrap().clone();
+    assert!(vl_request_body.contains("https://example.com/cat.png"));
+    assert!(vl_request_body.contains("qwen-vl-plus"));
+    // 用户提问文字应被转发给 VL 模型（带问题识图）
+    assert!(
+        vl_request_body.contains("看下这张图"),
+        "用户提问应转发给 VL 模型"
+    );
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_forwards_user_question_as_prompt() {
+    // 用户提问文字应作为 prompt 传给 VL 模型，带问题识图
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured_clone = captured.clone();
+    let response = vl_response("截图显示一个登录表单");
+    let server = tokio::spawn(async move {
+        mock_vl_server(
+            listener,
+            Box::leak(response.into_boxed_str()),
+            captured_clone,
+        )
+        .await;
+    });
+
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "mimo-v2.5".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        protocol: codex_plus_core::settings::RelayProtocol::ChatCompletions,
+        max_tokens: 256,
+        context_window: 0,
+    };
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut body = json!({
+        "model": "xopdeepseekv4flash",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_text","text":"这个登录表单的报错信息是什么？"},
+                {"type":"input_image","image_url":"https://example.com/login.png"}
+            ]}
+        ]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    let vl_request_body = captured.lock().unwrap().clone();
+    // 用户的具体问题应出现在 VL 请求体里
+    assert!(
+        vl_request_body.contains("这个登录表单的报错信息是什么？"),
+        "VL 请求应包含用户提问文字，实际：{vl_request_body}"
+    );
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_uses_configured_max_tokens() {
+    // max_tokens 应从 config 读取，不硬编码 256
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured_clone = captured.clone();
+    let response = vl_response("图片描述");
+    let server = tokio::spawn(async move {
+        mock_vl_server(
+            listener,
+            Box::leak(response.into_boxed_str()),
+            captured_clone,
+        )
+        .await;
+    });
+
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "mimo-v2.5".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        protocol: codex_plus_core::settings::RelayProtocol::ChatCompletions,
+        max_tokens: 1024,
+        context_window: 0,
+    };
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut body = json!({
+        "model": "xopdeepseekv4flash",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_image","image_url":"https://example.com/a.png"}
+            ]}
+        ]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    let vl_request_body = captured.lock().unwrap().clone();
+    assert!(
+        vl_request_body.contains(r#""max_tokens":1024"#),
+        "VL 请求应使用配置的 max_tokens=1024，实际：{vl_request_body}"
+    );
+    assert!(
+        !vl_request_body.contains(r#""max_tokens":256"#),
+        "不应硬编码 256"
+    );
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_falls_back_to_generic_prompt_without_user_text() {
+    // 消息只有图片没有文字时，退回固定提示词（不崩）
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured_clone = captured.clone();
+    let response = vl_response("一张图片");
+    let server = tokio::spawn(async move {
+        mock_vl_server(
+            listener,
+            Box::leak(response.into_boxed_str()),
+            captured_clone,
+        )
+        .await;
+    });
+
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "mimo-v2.5".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        protocol: codex_plus_core::settings::RelayProtocol::ChatCompletions,
+        max_tokens: 256,
+        context_window: 0,
+    };
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut body = json!({
+        "model": "xopdeepseekv4flash",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_image","image_url":"https://example.com/a.png"}
+            ]}
+        ]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    let vl_request_body = captured.lock().unwrap().clone();
+    // 无用户文字时应用固定提示词
+    assert!(
+        vl_request_body.contains("简要描述这张图片"),
+        "无用户文字时应退回固定提示词，实际：{vl_request_body}"
+    );
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_uses_responses_api_when_protocol_is_responses() {
+    // protocol=Responses：请求体用 `input` 数组 + input_text/input_image，
+    // 响应解析 `output[*].content[*].text`
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured_clone = captured.clone();
+    let response = r#"{"id":"resp-1","object":"response","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"图片中是一只橘猫"}]}]}"#;
+    let server = tokio::spawn(async move {
+        mock_vl_server(
+            listener,
+            Box::leak(response.to_string().into_boxed_str()),
+            captured_clone,
+        )
+        .await;
+    });
+
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "gpt-5.5".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        protocol: codex_plus_core::settings::RelayProtocol::Responses,
+        max_tokens: 256,
+        context_window: 0,
+    };
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_image","image_url":"https://example.com/cat.png"}
+            ]}
+        ]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    // 替换为 input_text
+    let content_text = body["input"][0]["content"][0]["text"].as_str().unwrap();
+    assert!(content_text.contains("橘猫"));
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(!serialized.contains("image_url"));
+    // 验证请求体格式：Responses API 应该用 `input` 数组 + input_text/input_image
+    let vl_request_body = captured.lock().unwrap().clone();
+    assert!(
+        vl_request_body.contains("\"input\":"),
+        "Responses 请求体应含 input 数组"
+    );
+    assert!(
+        vl_request_body.contains("input_text"),
+        "Responses 请求体应含 input_text part"
+    );
+    assert!(
+        vl_request_body.contains("input_image"),
+        "Responses 请求体应含 input_image part"
+    );
+    assert!(
+        !vl_request_body.contains("\"messages\":"),
+        "Responses 协议不应含 Chat Completions 的 messages 字段"
+    );
+    // image_url 应为字符串（Responses API 格式），不是对象 {url:...}
+    // Ark 等上游收到对象会报 "invalid url scheme, parse map[url:...]"
+    assert!(
+        vl_request_body.contains(r#""image_url":"https://example.com/cat.png""#),
+        "Responses 协议 image_url 应为字符串，实际：{vl_request_body}"
+    );
+    assert!(
+        !vl_request_body.contains(r#""image_url":{"url""#),
+        "Responses 协议 image_url 不应为对象 {{url:...}}，实际：{vl_request_body}"
+    );
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_strips_old_images_outside_context_window() {
+    // context_window 限制：超出窗口的老图直接 strip，不调 VL（省成本）
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured_clone = captured.clone();
+    let response = vl_response("最近一张图的描述");
+    let server = tokio::spawn(async move {
+        mock_vl_server(
+            listener,
+            Box::leak(response.into_boxed_str()),
+            captured_clone,
+        )
+        .await;
+    });
+
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "mimo-v2.5".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        protocol: codex_plus_core::settings::RelayProtocol::ChatCompletions,
+        max_tokens: 256,
+        // 只覆盖最近一条消息（~25 token），两条老图 strip
+        context_window: 30,
+    };
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let long_text = "x".repeat(100); // ~25 token
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_text","text": long_text.clone()},
+                {"type":"input_image","image_url":"https://example.com/old1.png"}
+            ]},
+            {"type":"message","role":"user","content":[
+                {"type":"input_text","text": long_text.clone()},
+                {"type":"input_image","image_url":"https://example.com/old2.png"}
+            ]},
+            {"type":"message","role":"user","content":[
+                {"type":"input_text","text": long_text.clone()},
+                {"type":"input_image","image_url":"https://example.com/recent.png"}
+            ]}
+        ]
+    });
+    analyze_images_with_vl(&mut body, &config, &client)
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    // 只有窗口内的最近一张图被 VL 处理
+    let vl_request_body = captured.lock().unwrap().clone();
+    assert!(
+        vl_request_body.contains("recent.png"),
+        "窗口内的图应被 VL 处理，实际：{vl_request_body}"
+    );
+    assert!(
+        !vl_request_body.contains("old1.png") && !vl_request_body.contains("old2.png"),
+        "窗口外的老图不应调 VL，实际：{vl_request_body}"
+    );
+
+    // 窗口外的图被 strip（input_image 移除），最近图的 VL 描述保留
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(!serialized.contains("old1.png"), "老图 URL 应被移除");
+    assert!(!serialized.contains("old2.png"), "老图 URL 应被移除");
+    assert!(serialized.contains("最近一张图"), "最近图的 VL 描述应保留");
+}
+
+#[tokio::test]
+async fn analyze_images_with_vl_returns_error_when_vl_call_fails() {
+    // VL 不可用时必须返回 Err（让上游决定是否降级为 strip）
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "qwen-vl-plus".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: "http://127.0.0.1:1/v1".to_string(), // 不可达
+        protocol: codex_plus_core::settings::RelayProtocol::ChatCompletions,
+        max_tokens: 256,
+        context_window: 0,
+    };
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_millis(200))
+        .build()
+        .unwrap();
+    let mut body = json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_image","image_url":"https://example.com/cat.png"}
+            ]}
+        ]
+    });
+    let result = analyze_images_with_vl(&mut body, &config, &client).await;
+    assert!(result.is_err(), "VL 不可达时必须返回 Err 让上游降级");
+}
+
+#[test]
 fn upstream_chat_error_is_regularized_as_responses_error_envelope() {
     let json_error = responses_error_from_upstream(
         400,
@@ -757,6 +1825,116 @@ fn upstream_chat_error_is_regularized_as_responses_error_envelope() {
     assert_eq!(text_error["error"]["message"], "<html>bad gateway</html>");
     assert_eq!(text_error["error"]["type"], "upstream_error");
     assert_eq!(text_error["error"]["code"], "502");
+}
+
+#[tokio::test]
+async fn apply_vl_with_fallback_returns_supports_image_true_when_base_already_true() {
+    // 多模态模型：base supports_image=true，VL 不会触发
+    let mut relay = RelayProfile::default();
+    relay.strip_images = false; // supports_image = true
+    let mut config = VisionRelayConfig::default();
+    config.enabled = true;
+    config.model = "qwen-vl-plus".to_string();
+    config.base_url = "http://127.0.0.1:1/v1".to_string(); // 不可达，证明不会调
+    let body = json!({"model":"gpt-5.5","input":[]});
+    let (supports_image, returned_body) = apply_vl_with_fallback(&relay, body.clone(), &config, "")
+        .await
+        .unwrap();
+    assert!(supports_image);
+    assert_eq!(returned_body, body);
+}
+
+#[tokio::test]
+async fn apply_vl_with_fallback_returns_supports_image_false_when_vl_disabled() {
+    // 纯文本模型但 VL 未启用：返回 (false, body) 让 strip 处理
+    let mut relay = RelayProfile::default();
+    relay.strip_images = true; // supports_image = false
+    let config = VisionRelayConfig::default(); // enabled = false
+    let body = json!({
+        "model":"deepseek-v4-flash",
+        "input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://x.com/a.png"}]}]
+    });
+    let (supports_image, returned_body) = apply_vl_with_fallback(&relay, body.clone(), &config, "")
+        .await
+        .unwrap();
+    assert!(!supports_image);
+    assert_eq!(
+        returned_body, body,
+        "VL 未启用时 body 必须原样返回（由 strip 处理）"
+    );
+}
+
+#[tokio::test]
+async fn apply_vl_with_fallback_falls_back_to_strip_when_vl_fails() {
+    // 纯文本模型 + VL 启用 + VL 不可达：返回 (false, 原 body) 让 strip 处理
+    let mut relay = RelayProfile::default();
+    relay.strip_images = true;
+    let mut config = VisionRelayConfig::default();
+    config.enabled = true;
+    config.model = "qwen-vl-plus".to_string();
+    config.base_url = "http://127.0.0.1:1/v1".to_string(); // 不可达
+    config.api_key = "sk-test".to_string();
+    let body = json!({
+        "model":"deepseek-v4-flash",
+        "input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://x.com/a.png"}]}]
+    });
+    let (supports_image, returned_body) = apply_vl_with_fallback(&relay, body.clone(), &config, "")
+        .await
+        .unwrap();
+    assert!(!supports_image, "VL 失败时必须降级为 strip，不能阻断用户");
+    assert_eq!(
+        returned_body, body,
+        "VL 失败时 body 必须是原版（让 strip 处理）"
+    );
+}
+
+#[tokio::test]
+async fn apply_vl_with_fallback_returns_preprocessed_body_when_vl_succeeds() {
+    // 纯文本模型 + VL 启用 + VL 可用：返回 (true, 预处理后 body)
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let captured_clone = captured.clone();
+    let response = vl_response("一只橘猫坐在窗台");
+    let server = tokio::spawn(async move {
+        mock_vl_server(
+            listener,
+            Box::leak(response.into_boxed_str()),
+            captured_clone,
+        )
+        .await;
+    });
+
+    let mut relay = RelayProfile::default();
+    relay.strip_images = true;
+    let config = VisionRelayConfig {
+        enabled: true,
+        model: "qwen-vl-plus".to_string(),
+        api_key: "sk-test".to_string(),
+        base_url: format!("http://127.0.0.1:{port}/v1"),
+        protocol: codex_plus_core::settings::RelayProtocol::ChatCompletions,
+        max_tokens: 256,
+        context_window: 0,
+    };
+    let body = json!({
+        "model":"deepseek-v4-flash",
+        "input":[{"type":"message","role":"user","content":[
+            {"type":"input_image","image_url":"https://example.com/cat.png"}
+        ]}]
+    });
+    let (supports_image, returned_body) = apply_vl_with_fallback(&relay, body, &config, "")
+        .await
+        .unwrap();
+    server.await.unwrap();
+    assert!(
+        supports_image,
+        "VL 成功后 supports_image 必须 true（让 strip 走 no-op）"
+    );
+    let content = returned_body["input"][0]["content"][0].clone();
+    assert_eq!(content["type"], "input_text");
+    assert!(content["text"].as_str().unwrap().contains("橘猫"));
 }
 
 #[test]

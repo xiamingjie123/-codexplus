@@ -2473,6 +2473,23 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.vision-relay-settings-block {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: hsl(var(--muted) / 0.4);
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border) / 0.5);
+}
+
+.vision-relay-settings-block .form-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.vision-relay-settings-block .switch-row {
+  padding: 8px 0;
+}
+
 .stepwise-settings-section {
   margin: -4px 0 12px;
   color: hsl(var(--muted-foreground));
@@ -3416,9 +3433,9 @@ body {
 
 .relay-model-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(120px, 180px) 36px;
+  grid-template-columns: minmax(140px, 1fr) minmax(96px, 140px) minmax(64px, 80px) minmax(64px, 80px) 32px;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .relay-model-row-head {
@@ -3429,4 +3446,23 @@ body {
 
 .relay-model-row input {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.relay-model-image-support {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.relay-model-image-support input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.relay-model-image-support input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }

@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import {
   buildModelWindows,
+  modelImageSupportMapToRows,
   modelWindowRowsFromProfile,
   modelWindowsMapToText,
   modelWindowsTextToMap,
@@ -29,10 +30,13 @@ type RelayProfileShape = {
   autoCompactLimit: string;
   modelList: string;
   modelWindows: string;
+  stripImages: boolean;
+  modelImageSupport: string;
+  modelReasoningSupport: string;
   userAgent: string;
 };
 
-// 类型检查：确保 RelayProfile 包含 modelWindows 字段
+// 类型检查：确保测试夹具覆盖模型窗口、图片和推理能力字段
 const _profileTypeCheck: RelayProfileShape = {
   id: "test",
   name: "",
@@ -53,6 +57,9 @@ const _profileTypeCheck: RelayProfileShape = {
   autoCompactLimit: "",
   modelList: "",
   modelWindows: "",
+  stripImages: false,
+  modelImageSupport: "",
+  modelReasoningSupport: "",
   userAgent: "",
 };
 
@@ -105,9 +112,9 @@ describe("model-windows helpers", () => {
     assert.deepStrictEqual(
       modelWindowRowsFromProfile("a\nb\nc", '{"a":"1M","c":"200K"}'),
       [
-        { model: "a", window: "1M" },
-        { model: "b", window: "" },
-        { model: "c", window: "200K" },
+        { model: "a", window: "1M", textOnly: false, noReasoning: false },
+        { model: "b", window: "", textOnly: false, noReasoning: false },
+        { model: "c", window: "200K", textOnly: false, noReasoning: false },
       ],
     );
   });
@@ -115,13 +122,15 @@ describe("model-windows helpers", () => {
   it("serializeModelWindowRows 从行控件生成 modelList 和 modelWindows", () => {
     assert.deepStrictEqual(
       serializeModelWindowRows([
-        { model: "a", window: "1M" },
-        { model: "", window: "400K" },
-        { model: "b", window: "" },
+        { model: "a", window: "1M", textOnly: false, noReasoning: false },
+        { model: "", window: "400K", textOnly: false, noReasoning: false },
+        { model: "b", window: "", textOnly: false, noReasoning: false },
       ]),
       {
         modelList: "a\nb",
         modelWindows: '{"a":"1M"}',
+        modelImageSupport: "{}",
+        modelReasoningSupport: "{}",
       },
     );
   });
@@ -130,19 +139,112 @@ describe("model-windows helpers", () => {
     assert.deepStrictEqual(
       mergeModelWindowRows(
         [
-          { model: "deepseek-v4-flash", window: "1M" },
-          { model: "  ", window: "" },
+          { model: "deepseek-v4-flash", window: "1M", textOnly: false, noReasoning: false },
+          { model: "  ", window: "", textOnly: false, noReasoning: false },
         ],
         [
-          { model: "deepseek-v4-flash", window: "" },
-          { model: "deepseek-v4-pro", window: "" },
-          { model: " deepseek-v4-pro ", window: "200K" },
+          { model: "deepseek-v4-flash", window: "", textOnly: false, noReasoning: false },
+          { model: "deepseek-v4-pro", window: "", textOnly: true, noReasoning: false },
+          { model: " deepseek-v4-pro ", window: "200K", textOnly: false, noReasoning: false },
         ],
       ),
       [
-        { model: "deepseek-v4-flash", window: "1M" },
-        { model: "deepseek-v4-pro", window: "" },
+        { model: "deepseek-v4-flash", window: "1M", textOnly: false, noReasoning: false },
+        { model: "deepseek-v4-pro", window: "", textOnly: true, noReasoning: false },
       ],
     );
+  });
+
+  it("modelImageSupportMapToRows 解析 JSON map 并按反义存为 textOnly", () => {
+    // map 里 false 表示纯文本 → textOnly=true
+    // map 里 true 表示多模态 → textOnly=false
+    assert.deepStrictEqual(
+      modelImageSupportMapToRows('{"deepseek-v4-pro":false,"gpt-5.5":true}'),
+      new Map([
+        ["deepseek-v4-pro", true],
+        ["gpt-5.5", false],
+      ]),
+    );
+  });
+
+  it("modelImageSupportMapToRows 对非法 JSON 返回空 Map", () => {
+    assert.deepStrictEqual(modelImageSupportMapToRows("not-json"), new Map());
+    assert.deepStrictEqual(modelImageSupportMapToRows(""), new Map());
+  });
+
+  it("serializeModelWindowRows 把 textOnly 列写入 modelImageSupport map", () => {
+    // textOnly=true（纯文本）才写入 map[model] = false
+    // textOnly=false（多模态，默认）从 map 中省略
+    const result = serializeModelWindowRows([
+      { model: "gpt-5.5", window: "1M", textOnly: false, noReasoning: false },
+      { model: "deepseek-v4-pro", window: "200K", textOnly: true, noReasoning: false },
+    ]);
+    assert.strictEqual(result.modelList, "gpt-5.5\ndeepseek-v4-pro");
+    assert.strictEqual(result.modelWindows, '{"gpt-5.5":"1M","deepseek-v4-pro":"200K"}');
+    assert.strictEqual(
+      result.modelImageSupport,
+      '{"deepseek-v4-pro":false}',
+      "textOnly=true 才写入 map（map 里 false = 纯文本）；默认 false 是多模态，省略以保持 map 干净",
+    );
+  });
+
+  it("modelWindowRowsFromProfile 把 modelImageSupport 读进 textOnly 列", () => {
+    const rows = modelWindowRowsFromProfile(
+      "gpt-5.5\ndeepseek-v4-pro",
+      '{"gpt-5.5":"1M"}',
+      '{"deepseek-v4-pro":false}',
+    );
+    assert.deepStrictEqual(rows, [
+      { model: "gpt-5.5", window: "1M", textOnly: false, noReasoning: false },
+      { model: "deepseek-v4-pro", window: "", textOnly: true, noReasoning: false },
+    ]);
+  });
+
+  it("modelWindowRowsFromProfile 未配置 modelImageSupport 时默认 textOnly=false（多模态）", () => {
+    // spec：未配置默认多模态（textOnly=false）
+    const rows = modelWindowRowsFromProfile("gpt-5.5", "", "");
+    assert.deepStrictEqual(rows, [
+      { model: "gpt-5.5", window: "", textOnly: false, noReasoning: false },
+    ]);
+  });
+
+  it("modelWindowRowsFromProfile 对非法 JSON 的 modelImageSupport 走默认 false", () => {
+    const rows = modelWindowRowsFromProfile("deepseek-v4-pro", "", "not-json");
+    assert.strictEqual(rows[0].textOnly, false);
+  });
+
+  it("serializeModelWindowRows 把 noReasoning 列写入 modelReasoningSupport map", () => {
+    // noReasoning=true（不支持推理）才写入 map[model] = false
+    // noReasoning=false（默认支持推理）从 map 中省略
+    const result = serializeModelWindowRows([
+      { model: "minimax-m3", window: "1M", textOnly: false, noReasoning: false },
+      { model: "kimi-k2.6", window: "200K", textOnly: false, noReasoning: true },
+    ]);
+    assert.strictEqual(result.modelList, "minimax-m3\nkimi-k2.6");
+    assert.strictEqual(
+      result.modelReasoningSupport,
+      '{"kimi-k2.6":false}',
+      "noReasoning=true 才写入 map（map 里 false = 不支持推理）；默认 false 是支持推理，省略以保持 map 干净",
+    );
+  });
+
+  it("modelWindowRowsFromProfile 把 modelReasoningSupport 读进 noReasoning 列", () => {
+    const rows = modelWindowRowsFromProfile(
+      "minimax-m3\nkimi-k2.6",
+      '{"minimax-m3":"1M"}',
+      "",
+      '{"kimi-k2.6":false}',
+    );
+    assert.deepStrictEqual(rows, [
+      { model: "minimax-m3", window: "1M", textOnly: false, noReasoning: false },
+      { model: "kimi-k2.6", window: "", textOnly: false, noReasoning: true },
+    ]);
+  });
+
+  it("modelWindowRowsFromProfile 未配置 modelReasoningSupport 时默认 noReasoning=false（支持推理）", () => {
+    const rows = modelWindowRowsFromProfile("minimax-m3", "", "", "");
+    assert.deepStrictEqual(rows, [
+      { model: "minimax-m3", window: "", textOnly: false, noReasoning: false },
+    ]);
   });
 });
