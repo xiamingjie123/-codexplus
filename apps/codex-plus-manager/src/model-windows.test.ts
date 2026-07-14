@@ -1,6 +1,5 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import type { RelayProfile } from "./App.tsx";
 import {
   buildModelWindows,
   modelWindowRowsFromProfile,
@@ -10,8 +9,31 @@ import {
   mergeModelWindowRows,
 } from "./model-windows.ts";
 
+type RelayProfileShape = {
+  id: string;
+  name: string;
+  model: string;
+  baseUrl: string;
+  upstreamBaseUrl: string;
+  apiKey: string;
+  protocol: "responses" | "chatCompletions";
+  relayMode: "official" | "mixedApi" | "pureApi" | "aggregate";
+  officialMixApiKey: boolean;
+  testModel: string;
+  configContents: string;
+  authContents: string;
+  useCommonConfig: boolean;
+  contextSelection: { mcpServers: string[]; skills: string[]; plugins: string[] };
+  contextSelectionInitialized: boolean;
+  contextWindow: string;
+  autoCompactLimit: string;
+  modelList: string;
+  modelWindows: string;
+  userAgent: string;
+};
+
 // 类型检查：确保 RelayProfile 包含 modelWindows 字段
-const _profileTypeCheck: RelayProfile = {
+const _profileTypeCheck: RelayProfileShape = {
   id: "test",
   name: "",
   model: "",

@@ -1025,12 +1025,13 @@ impl BridgeSettingsService for FakeSettings {
             raw.insert("enhancementsEnabled".to_string(), json!(value));
         }
         for key in [
+            "codexAppPluginEntryUnlock",
             "codexAppPluginMarketplaceUnlock",
             "codexAppModelWhitelistUnlock",
             "codexAppSessionDelete",
             "codexAppMarkdownExport",
-            "codexAppForceChineseLocale",
             "codexAppProjectMove",
+            "codexAppConversationTimeline",
             "codexAppThreadIdBadge",
             "codexAppConversationView",
             "codexAppThreadScrollRestore",

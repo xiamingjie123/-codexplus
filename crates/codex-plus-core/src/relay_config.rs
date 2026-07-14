@@ -2017,6 +2017,14 @@ fn complete_relay_profile_config(profile: &RelayProfile) -> anyhow::Result<Strin
 }
 
 pub fn normalize_relay_profile_for_storage(profile: &mut RelayProfile) -> anyhow::Result<()> {
+    if profile.relay_mode == crate::settings::RelayMode::Aggregate {
+        profile.model.clear();
+        profile.base_url.clear();
+        profile.upstream_base_url.clear();
+        profile.api_key.clear();
+        profile.config_contents.clear();
+        profile.auth_contents.clear();
+    }
     if profile.model_windows.trim().is_empty() && profile.model_list.contains('[') {
         let (clean_list, windows) =
             crate::model_suffix::migrate_model_list_with_suffixes(&profile.model_list);

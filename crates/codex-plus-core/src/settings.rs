@@ -237,7 +237,7 @@ pub struct BackendSettings {
     pub codex_app_native_menu_placement: bool,
     #[serde(rename = "codexAppNativeMenuLocalization", default = "default_true")]
     pub codex_app_native_menu_localization: bool,
-    #[serde(rename = "codexAppServiceTierControls", default)]
+    #[serde(rename = "codexAppServiceTierControls", default = "default_true")]
     pub codex_app_service_tier_controls: bool,
     #[serde(rename = "codexAppPetRealMouseLook", default)]
     pub codex_app_pet_real_mouse_look: bool,
@@ -352,7 +352,7 @@ impl Default for BackendSettings {
             codex_app_upstream_worktree_create: true,
             codex_app_native_menu_placement: true,
             codex_app_native_menu_localization: true,
-            codex_app_service_tier_controls: false,
+            codex_app_service_tier_controls: true,
             codex_app_pet_real_mouse_look: false,
             codex_app_stepwise_enabled: false,
             codex_app_stepwise_direct_send: false,

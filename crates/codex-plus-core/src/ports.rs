@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::net::{TcpListener, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use fs2::FileExt;
 
@@ -344,7 +345,7 @@ mod tests {
 
     #[test]
     fn launcher_guard_port_honors_env_override() {
-        let _guard = guard_port_env_lock();
+        let _lock = _guard_port_env_test_lock();
         _clear_guard_port_env_vars();
         unsafe { std::env::set_var("CODEX_PLUS_GUARD_PORT", "9999") };
         let port = launcher_guard_port();
@@ -354,7 +355,7 @@ mod tests {
 
     #[test]
     fn launcher_guard_port_honors_specific_env_override() {
-        let _guard = guard_port_env_lock();
+        let _lock = _guard_port_env_test_lock();
         _clear_guard_port_env_vars();
         unsafe { std::env::set_var("CODEX_PLUS_LAUNCHER_GUARD_PORT", "8888") };
         let port = launcher_guard_port();
@@ -364,7 +365,7 @@ mod tests {
 
     #[test]
     fn manager_guard_port_honors_specific_env_override() {
-        let _guard = guard_port_env_lock();
+        let _lock = _guard_port_env_test_lock();
         _clear_guard_port_env_vars();
         unsafe { std::env::set_var("CODEX_PLUS_MANAGER_GUARD_PORT", "7777") };
         let port = manager_guard_port();
@@ -374,7 +375,7 @@ mod tests {
 
     #[test]
     fn launcher_guard_port_honors_offset_env() {
-        let _guard = guard_port_env_lock();
+        let _lock = _guard_port_env_test_lock();
         _clear_guard_port_env_vars();
         unsafe { std::env::set_var("CODEX_PLUS_GUARD_PORT_OFFSET", "50") };
         let port = launcher_guard_port();
@@ -398,4 +399,9 @@ fn _clear_guard_port_env_vars() {
         let _ = std::env::remove_var("CODEX_PLUS_MANAGER_GUARD_PORT");
         let _ = std::env::remove_var("CODEX_PLUS_GUARD_PORT_OFFSET");
     }
+}
+
+fn _guard_port_env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().expect("guard port env test lock poisoned")
 }
