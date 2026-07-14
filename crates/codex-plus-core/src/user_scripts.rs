@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -43,6 +45,11 @@ pub struct UserScriptManager {
     user_dir: PathBuf,
     config_path: PathBuf,
     config_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserScriptSnapshot {
+    digest: u64,
 }
 
 impl UserScriptManager {
@@ -203,6 +210,16 @@ impl UserScriptManager {
         Ok(blocks.join("\n"))
     }
 
+    pub fn snapshot(&self) -> anyhow::Result<UserScriptSnapshot> {
+        let mut hasher = DefaultHasher::new();
+        hash_script_config(&self.config_path, &mut hasher)?;
+        hash_script_directory("builtin", &self.builtin_dir, &mut hasher)?;
+        hash_script_directory("user", &self.user_dir, &mut hasher)?;
+        Ok(UserScriptSnapshot {
+            digest: hasher.finish(),
+        })
+    }
+
     fn scan_scripts(&self, config: &UserScriptConfig) -> anyhow::Result<Vec<Value>> {
         Ok(self
             .scan_script_files(config)?
@@ -280,6 +297,58 @@ impl UserScriptManager {
             });
         }
         Ok(())
+    }
+}
+
+fn hash_script_config(path: &std::path::Path, hasher: &mut DefaultHasher) -> anyhow::Result<()> {
+    "config".hash(hasher);
+    hash_optional_file(path, hasher)
+}
+
+fn hash_script_directory(
+    source: &str,
+    directory: &std::path::Path,
+    hasher: &mut DefaultHasher,
+) -> anyhow::Result<()> {
+    source.hash(hasher);
+    let Ok(entries) = fs::read_dir(directory) else {
+        "missing".hash(hasher);
+        return Ok(());
+    };
+    let mut paths = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("js"))
+        .collect::<Vec<_>>();
+    paths.sort_by_key(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    });
+
+    for path in paths {
+        hash_optional_file(&path, hasher)?;
+    }
+    Ok(())
+}
+
+fn hash_optional_file(path: &std::path::Path, hasher: &mut DefaultHasher) -> anyhow::Result<()> {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default()
+        .hash(hasher);
+    match fs::read(path) {
+        Ok(content) => {
+            "present".hash(hasher);
+            content.hash(hasher);
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            "missing".hash(hasher);
+            Ok(())
+        }
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to read user script snapshot {}", path.display())),
     }
 }
 
