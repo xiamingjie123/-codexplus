@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.40 - 2026-07-14
+
 - 支持每次推送 `main` 后自动递增补丁版本、同步应用版本文件并创建正式 GitHub Release。
 - 自动发布复用 Windows 与 macOS 打包流程并更新 `latest.json`，同时避免 PR 构建工作流重复处理 `main`。
 
