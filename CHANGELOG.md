@@ -7,7 +7,8 @@
 - 新增按模型配置图片与推理能力、纯文本模型图片处理和 VL 视觉模型中转。
 - 优化 CDP 事件驱动就绪检测、用户脚本热重载和 goal resume guard。
 - 修复供应商同步后的幽灵任务索引、新建 V2 WebP 桌宠兼容及多项供应商切换稳定性问题。
-- 验证通过：更新源专项测试、TypeScript 检查、Vite 生产构建和 `cargo test --workspace`。
+- macOS DMG 创建增加有限次数重试，避免 GitHub runner 的瞬时 `Resource busy` 中断发行。
+- 验证通过：更新源专项测试、安装器测试、TypeScript 检查、Vite 生产构建和 `cargo test --workspace`。
 
 ## 1.2.22 - 2026-06-28
 
