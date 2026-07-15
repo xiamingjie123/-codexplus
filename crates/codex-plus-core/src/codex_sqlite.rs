@@ -3,6 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+const LOG_MODEL_SUFFIX_CLEANUP_MARKER_FILE: &str =
+    ".tmp/codex-plus/logs-model-suffix-cleanup-v1.json";
+const LOG_MODEL_SUFFIX_CLEANUP_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 pub fn default_codex_home_dir() -> PathBuf {
     crate::codex_home::default_codex_home_dir()
@@ -141,6 +147,13 @@ pub struct SanitizeModelSuffixResult {
     pub updated: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogModelSuffixCleanupResult {
+    pub status: String,
+    pub db_bytes: u64,
+    pub updated: usize,
+}
+
 /// 扫描 codex session 数据库中的 threads 表，把 model 字段里带合法后缀的
 /// 记录改写为剥离后缀的 slug，使 codex 模型选择器不再显示带后缀的历史项。
 pub fn sanitize_thread_model_suffixes(home: &Path) -> anyhow::Result<SanitizeModelSuffixResult> {
@@ -161,17 +174,7 @@ pub fn sanitize_thread_model_suffixes(home: &Path) -> anyhow::Result<SanitizeMod
 pub fn sanitize_historical_model_suffixes(
     home: &Path,
 ) -> anyhow::Result<SanitizeModelSuffixResult> {
-    let result = sanitize_thread_model_suffixes(home)?;
-    if let Err(error) = sanitize_logs_model_suffixes(home) {
-        // 日志清理失败不应阻断启动流程，仅记录诊断日志。
-        let _ = crate::diagnostic_log::append_diagnostic_log(
-            "codex_sqlite.sanitize_logs_model_suffixes_failed",
-            serde_json::json!({
-                "error": error.to_string(),
-            }),
-        );
-    }
-    Ok(result)
+    sanitize_thread_model_suffixes(home)
 }
 
 fn sanitize_thread_model_suffixes_in_db(db_path: &Path) -> anyhow::Result<(usize, usize)> {
@@ -218,10 +221,74 @@ fn sanitize_thread_model_suffixes_in_db(db_path: &Path) -> anyhow::Result<(usize
 /// 清理 logs_2.sqlite 中 feedback_log_body 字段里包含模型后缀的日志。
 /// 这些日志只是历史记录，不会直接影响模型选择器，但清理后可避免
 /// 诊断/遥测中继续出现已废弃的带后缀模型名。
-fn sanitize_logs_model_suffixes(home: &Path) -> anyhow::Result<()> {
+pub fn sanitize_logs_model_suffixes_once(
+    home: &Path,
+) -> anyhow::Result<LogModelSuffixCleanupResult> {
+    let marker = logs_model_suffix_cleanup_marker_path(home);
+    if marker.exists() {
+        let db_bytes = fs::metadata(codex_logs_db_path_from_home(home))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        return Ok(LogModelSuffixCleanupResult {
+            status: "already_done".to_string(),
+            db_bytes,
+            updated: 0,
+        });
+    }
     let db_path = codex_logs_db_path_from_home(home);
     if !db_path.exists() {
-        return Ok(());
+        return Ok(LogModelSuffixCleanupResult {
+            status: "missing".to_string(),
+            db_bytes: 0,
+            updated: 0,
+        });
+    }
+    let db_bytes = fs::metadata(&db_path)?.len();
+    if db_bytes > LOG_MODEL_SUFFIX_CLEANUP_MAX_BYTES {
+        let result = LogModelSuffixCleanupResult {
+            status: "skipped_too_large".to_string(),
+            db_bytes,
+            updated: 0,
+        };
+        write_logs_model_suffix_cleanup_marker(home, &result)?;
+        return Ok(result);
+    }
+    let updated = sanitize_logs_model_suffixes(home)?;
+    let result = LogModelSuffixCleanupResult {
+        status: "cleaned".to_string(),
+        db_bytes,
+        updated,
+    };
+    write_logs_model_suffix_cleanup_marker(home, &result)?;
+    Ok(result)
+}
+
+fn logs_model_suffix_cleanup_marker_path(home: &Path) -> PathBuf {
+    home.join(LOG_MODEL_SUFFIX_CLEANUP_MARKER_FILE)
+}
+
+fn write_logs_model_suffix_cleanup_marker(
+    home: &Path,
+    result: &LogModelSuffixCleanupResult,
+) -> anyhow::Result<()> {
+    let path = logs_model_suffix_cleanup_marker_path(home);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let payload = json!({
+        "version": 1,
+        "status": result.status,
+        "db_bytes": result.db_bytes,
+        "updated": result.updated,
+    });
+    crate::settings::atomic_write(&path, serde_json::to_string_pretty(&payload)?.as_bytes())?;
+    Ok(())
+}
+
+fn sanitize_logs_model_suffixes(home: &Path) -> anyhow::Result<usize> {
+    let db_path = codex_logs_db_path_from_home(home);
+    if !db_path.exists() {
+        return Ok(0);
     }
     let mut conn = Connection::open(&db_path)?;
     let has_table = conn
@@ -232,7 +299,7 @@ fn sanitize_logs_model_suffixes(home: &Path) -> anyhow::Result<()> {
         )
         .is_ok();
     if !has_table {
-        return Ok(());
+        return Ok(0);
     }
     let has_body = conn
         .query_row(
@@ -242,7 +309,7 @@ fn sanitize_logs_model_suffixes(home: &Path) -> anyhow::Result<()> {
         )
         .is_ok();
     if !has_body {
-        return Ok(());
+        return Ok(0);
     }
     // 用保守模式匹配：包含 '[' 且以 ']%' 或包含 '[1M]' 等常见后缀。
     // 这里只替换明确符合 parse_model_suffix 规则的模型名，避免误改无关日志文本。
@@ -256,15 +323,17 @@ fn sanitize_logs_model_suffixes(home: &Path) -> anyhow::Result<()> {
 
     let tx = conn.transaction()?;
     let mut update = tx.prepare("UPDATE logs SET feedback_log_body = ?1 WHERE rowid = ?2")?;
+    let mut updated = 0usize;
     for (rowid, body) in rows {
         let sanitized = sanitize_model_suffixes_in_text(&body);
         if sanitized != body {
             update.execute([&sanitized, &rowid.to_string()])?;
+            updated += 1;
         }
     }
     drop(update);
     tx.commit()?;
-    Ok(())
+    Ok(updated)
 }
 
 /// 在一段文本中把所有符合 "slug[<number>K|M]" 格式的模型窗口后缀替换为纯 slug。

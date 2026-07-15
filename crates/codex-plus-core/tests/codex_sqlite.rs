@@ -1,6 +1,6 @@
 use codex_plus_core::codex_sqlite::{
     codex_listable_session_db_paths_from_home, codex_session_db_paths_from_home,
-    sanitize_historical_model_suffixes,
+    sanitize_historical_model_suffixes, sanitize_logs_model_suffixes_once,
 };
 use rusqlite::Connection;
 
@@ -217,10 +217,9 @@ fn sanitize_cleans_suffix_from_logs() {
     .unwrap();
     drop(conn);
 
-    let result = sanitize_historical_model_suffixes(&home).unwrap();
-    // threads 表为空，所以 scanned/updated 都是 0；但日志应被清理。
-    assert_eq!(result.scanned, 0);
-    assert_eq!(result.updated, 0);
+    let result = sanitize_logs_model_suffixes_once(&home).unwrap();
+    assert_eq!(result.status, "cleaned");
+    assert_eq!(result.updated, 1);
 
     let conn = Connection::open(&logs_path).unwrap();
     let body: String = conn
@@ -235,4 +234,78 @@ fn sanitize_cleans_suffix_from_logs() {
         "expected suffix to be stripped from logs, got: {body}"
     );
     assert!(body.contains("deepseek-v4-flash"));
+    assert!(
+        home.join(".tmp/codex-plus/logs-model-suffix-cleanup-v1.json")
+            .exists()
+    );
+}
+
+#[test]
+fn startup_sanitize_does_not_scan_logs_database() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".codex");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let logs_path = home.join("logs_2.sqlite");
+    let conn = Connection::open(&logs_path).unwrap();
+    conn.execute(
+        "CREATE TABLE logs (id INTEGER PRIMARY KEY, feedback_log_body TEXT)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO logs (id, feedback_log_body) VALUES (1, 'deepseek-v4-flash[1M]')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let result = sanitize_historical_model_suffixes(&home).unwrap();
+    assert_eq!(result.scanned, 0);
+    assert_eq!(result.updated, 0);
+
+    let conn = Connection::open(&logs_path).unwrap();
+    let body: String = conn
+        .query_row(
+            "SELECT feedback_log_body FROM logs WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(body, "deepseek-v4-flash[1M]");
+}
+
+#[test]
+fn logs_sanitize_once_skips_when_marker_exists() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".codex");
+    let marker = home.join(".tmp/codex-plus/logs-model-suffix-cleanup-v1.json");
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    std::fs::write(&marker, "{}").unwrap();
+
+    let result = sanitize_logs_model_suffixes_once(&home).unwrap();
+
+    assert_eq!(result.status, "already_done");
+    assert_eq!(result.updated, 0);
+}
+
+#[test]
+fn logs_sanitize_once_skips_large_logs_database() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join(".codex");
+    std::fs::create_dir_all(&home).unwrap();
+    let logs_path = home.join("logs_2.sqlite");
+    let file = std::fs::File::create(&logs_path).unwrap();
+    file.set_len(70 * 1024 * 1024).unwrap();
+    drop(file);
+
+    let result = sanitize_logs_model_suffixes_once(&home).unwrap();
+
+    assert_eq!(result.status, "skipped_too_large");
+    assert_eq!(result.updated, 0);
+    assert_eq!(result.db_bytes, 70 * 1024 * 1024);
+    assert!(
+        home.join(".tmp/codex-plus/logs-model-suffix-cleanup-v1.json")
+            .exists()
+    );
 }

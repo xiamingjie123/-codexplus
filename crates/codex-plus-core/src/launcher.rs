@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -263,10 +263,24 @@ where
     H: IntoLaunchHooks,
 {
     let hooks = hooks.into_launch_hooks();
+    let launch_started_at = Instant::now();
+    let mut phase_started_at = launch_started_at;
     let debug_port = hooks.select_debug_port(options.debug_port);
+    log_launch_phase(
+        "select_debug_port",
+        launch_started_at,
+        &mut phase_started_at,
+    );
     let mut helper_port = hooks.select_helper_port(options.helper_port);
+    log_launch_phase(
+        "select_helper_port",
+        launch_started_at,
+        &mut phase_started_at,
+    );
     let settings = hooks.load_settings().await?;
+    log_launch_phase("load_settings", launch_started_at, &mut phase_started_at);
     let app_dir = hooks.resolve_app_dir(options.app_dir.as_deref(), &settings)?;
+    log_launch_phase("resolve_app_dir", launch_started_at, &mut phase_started_at);
     let status_store = options.status_store.clone();
     let mut helper_started = false;
     let mut launched = None;
@@ -276,9 +290,15 @@ where
         let home = hooks.codex_home();
         if settings.provider_sync_enabled {
             crate::codex_app_state::capture_app_state_snapshot_nonfatal(&home, "launcher.before");
+            log_launch_phase(
+                "capture_app_state_snapshot",
+                launch_started_at,
+                &mut phase_started_at,
+            );
         }
         if settings.provider_sync_enabled {
             hooks.run_provider_sync().await?;
+            log_launch_phase("provider_sync", launch_started_at, &mut phase_started_at);
         }
         if let Err(error) = hooks.ensure_plugin_marketplace_config(&settings).await {
             let _ = crate::diagnostic_log::append_diagnostic_log(
@@ -288,8 +308,18 @@ where
                 }),
             );
         }
+        log_launch_phase(
+            "plugin_marketplace_config",
+            launch_started_at,
+            &mut phase_started_at,
+        );
         if settings.builtin_plugin_guard_enabled() {
             hooks.ensure_computer_use_config(&settings).await?;
+            log_launch_phase(
+                "computer_use_config",
+                launch_started_at,
+                &mut phase_started_at,
+            );
         }
         if settings.provider_sync_enabled && settings.builtin_plugin_guard_enabled() {
             hooks
@@ -298,12 +328,18 @@ where
                     "launcher.before_launch",
                 )
                 .await?;
+            log_launch_phase(
+                "builtin_plugin_state",
+                launch_started_at,
+                &mut phase_started_at,
+            );
         }
         if settings.provider_sync_enabled {
             crate::codex_app_state::sync_app_state_after_provider_switch_nonfatal(
                 &home,
                 "launcher.before_launch",
             );
+            log_launch_phase("sync_app_state", launch_started_at, &mut phase_started_at);
         }
         match crate::codex_sqlite::sanitize_historical_model_suffixes(&home) {
             Ok(result) if result.updated > 0 => {
@@ -325,6 +361,12 @@ where
                 );
             }
         }
+        log_launch_phase(
+            "sanitize_thread_models",
+            launch_started_at,
+            &mut phase_started_at,
+        );
+        spawn_logs_model_suffix_cleanup_once(home.clone());
         let protocol_proxy_enabled = relay_protocol_proxy_enabled(&settings);
         if protocol_proxy_enabled {
             helper_port = crate::protocol_proxy::DEFAULT_PROTOCOL_PROXY_PORT;
@@ -332,15 +374,22 @@ where
         if settings.enhancements_enabled || protocol_proxy_enabled {
             hooks.start_helper(helper_port).await?;
             helper_started = true;
+            log_launch_phase("start_helper", launch_started_at, &mut phase_started_at);
         }
 
         let launch = hooks
             .launch_codex(&app_dir, debug_port, &settings, &settings.codex_extra_args)
             .await?;
+        log_launch_phase("launch_codex", launch_started_at, &mut phase_started_at);
         launched = Some(launch.clone());
         keep_launched_on_error = true;
         if settings.builtin_plugin_guard_enabled() {
             hooks.start_computer_use_guard_watchdog(&settings).await?;
+            log_launch_phase(
+                "start_computer_use_watchdog",
+                launch_started_at,
+                &mut phase_started_at,
+            );
         }
 
         let mut injection_degraded = false;
@@ -348,6 +397,7 @@ where
             let injection_ready = hooks
                 .ensure_injection(debug_port, helper_port, &app_dir)
                 .await;
+            log_launch_phase("ensure_injection", launch_started_at, &mut phase_started_at);
             if injection_ready {
                 keep_launched_on_error = false;
                 // 注入成功后页面已加载，此时可以通过 CDP 清理 Electron Local Storage
@@ -356,9 +406,19 @@ where
                     debug_port,
                 )
                 .await;
+                log_launch_phase(
+                    "sanitize_local_storage",
+                    launch_started_at,
+                    &mut phase_started_at,
+                );
                 hooks
                     .start_bridge_watchdog(debug_port, helper_port, &app_dir)
                     .await?;
+                log_launch_phase(
+                    "start_bridge_watchdog",
+                    launch_started_at,
+                    &mut phase_started_at,
+                );
             } else {
                 let degraded = launch_status(
                     "running_degraded",
@@ -370,6 +430,11 @@ where
                 options.status_store.save_latest(&degraded)?;
                 hooks.write_status("running_degraded").await;
                 injection_degraded = true;
+                log_launch_phase(
+                    "write_degraded_status",
+                    launch_started_at,
+                    &mut phase_started_at,
+                );
             }
         }
 
@@ -383,6 +448,11 @@ where
             );
             options.status_store.save_latest(&status)?;
             hooks.write_status("running").await;
+            log_launch_phase(
+                "write_running_status",
+                launch_started_at,
+                &mut phase_started_at,
+            );
         }
 
         Ok(LaunchHandle {
@@ -415,6 +485,49 @@ where
             Err(error)
         }
     }
+}
+
+fn log_launch_phase(phase: &str, launch_started_at: Instant, phase_started_at: &mut Instant) {
+    let now = Instant::now();
+    let phase_elapsed_ms = now.duration_since(*phase_started_at).as_millis() as u64;
+    let total_elapsed_ms = now.duration_since(launch_started_at).as_millis() as u64;
+    let _ = crate::diagnostic_log::append_diagnostic_log(
+        "launcher.phase",
+        serde_json::json!({
+            "phase": phase,
+            "phase_elapsed_ms": phase_elapsed_ms,
+            "total_elapsed_ms": total_elapsed_ms,
+        }),
+    );
+    *phase_started_at = now;
+}
+
+fn spawn_logs_model_suffix_cleanup_once(home: PathBuf) {
+    tokio::task::spawn_blocking(move || {
+        let started_at = Instant::now();
+        match crate::codex_sqlite::sanitize_logs_model_suffixes_once(&home) {
+            Ok(result) => {
+                let _ = crate::diagnostic_log::append_diagnostic_log(
+                    "codex_sqlite.sanitize_logs_model_suffixes_once",
+                    serde_json::json!({
+                        "status": result.status,
+                        "db_bytes": result.db_bytes,
+                        "updated": result.updated,
+                        "elapsed_ms": started_at.elapsed().as_millis() as u64,
+                    }),
+                );
+            }
+            Err(error) => {
+                let _ = crate::diagnostic_log::append_diagnostic_log(
+                    "codex_sqlite.sanitize_logs_model_suffixes_once_failed",
+                    serde_json::json!({
+                        "error": error.to_string(),
+                        "elapsed_ms": started_at.elapsed().as_millis() as u64,
+                    }),
+                );
+            }
+        }
+    });
 }
 
 fn relay_protocol_proxy_enabled(settings: &BackendSettings) -> bool {
