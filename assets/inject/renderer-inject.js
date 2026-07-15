@@ -267,7 +267,7 @@
   const chatsSortRefreshIntervalMs = 1500;
   const chatsSortDbRefreshIntervalMs = 5000;
   const styleId = "codex-delete-style";
-  const codexDeleteStyleVersion = "14";
+  const codexDeleteStyleVersion = "15";
   const codexPlusMenuId = "codex-plus-menu";
   const codexPlusMenuFloatingClass = "codex-plus-menu-floating";
   const codexDeleteVersion = "7";
@@ -465,6 +465,9 @@
     style.id = styleId;
     style.dataset.codexDeleteStyleVersion = codexDeleteStyleVersion;
     style.textContent = `
+      ${selectors.sidebarThread}[data-codex-delete-row="true"] {
+        position: relative;
+      }
       .${actionGroupClass} {
         position: absolute;
         right: var(--codex-session-actions-right, 28px);
@@ -7656,8 +7659,12 @@
 
   function syncActionGroupLayout(row, group) {
     if (!row || !group) return;
-    if (group.dataset.codexActionLayoutStable === "true") return;
     const rowRect = row.getBoundingClientRect();
+    if (rowRect.width <= 0 || rowRect.height <= 0) {
+      delete group.dataset.codexActionLayoutStable;
+      delete group.dataset.codexActionLayoutSignature;
+      return;
+    }
     const nativeButtons = nativeActionButtonsFromRow(row);
     const leftmostNative = nativeButtons
       .map((button) => button.getBoundingClientRect())
@@ -7673,10 +7680,18 @@
     const titleRect = titleNode?.getBoundingClientRect();
     const titleLeft = titleRect?.left || rowRect.left + 40;
     const maxTitleWidth = Math.max(24, Math.round(rowRect.width - (titleLeft - rowRect.left) - right - groupWidth - 14));
+    const layoutSignature = [
+      Math.round(rowRect.width),
+      right,
+      groupWidth,
+      Math.round(titleLeft - rowRect.left),
+    ].join(":");
+    if (group.dataset.codexActionLayoutStable === "true" && group.dataset.codexActionLayoutSignature === layoutSignature) return;
     group.style.setProperty("--codex-session-actions-right", `${right}px`);
     row.style.setProperty("--codex-session-title-mask", `${right + groupWidth + 12}px`);
     row.style.setProperty("--codex-session-title-max-width", `${maxTitleWidth}px`);
     group.dataset.codexActionLayoutStable = "true";
+    group.dataset.codexActionLayoutSignature = layoutSignature;
   }
 
   function syncActionGroupsLayout() {
@@ -7872,6 +7887,7 @@
     const deleteReady = !settings.sessionDelete || existingDeleteButton?.dataset.codexDeleteVersion === codexDeleteVersion;
     const groupReady = existingGroup?.dataset.codexActionGroupVersion === codexActionGroupVersion;
     if (groupReady && deleteReady && !hasUnexpectedDelete && !hasUnexpectedMore && !hasUnexpectedExport && !hasUnexpectedMove && !missingDelete && !missingMore) {
+      syncActionGroupLayout(row, existingGroup);
       return;
     }
     removeActionGroups(row);
