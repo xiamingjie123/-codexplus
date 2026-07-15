@@ -18,6 +18,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  AppWindow,
   ArrowLeft,
   Bell,
   CheckCircle2,
@@ -37,6 +38,7 @@ import {
   FileCode2,
   Moon,
   Network,
+  PanelTopOpen,
   Power,
   PowerOff,
   Plus,
@@ -72,6 +74,7 @@ import {
 import { getLanguage, t, tf, toggleLanguage } from "@/i18n";
 
 const isWindowsPlatform = /\bWindows\b/i.test(navigator.userAgent);
+const codexDeckLogo = new URL("./assets/codex-deck-logo.svg", import.meta.url).href;
 
 type Status = "ok" | "failed" | "not_implemented" | "not_checked" | string;
 
@@ -686,12 +689,18 @@ const routes: Array<{ id: Route; label: string; icon: LucideIcon; badge?: string
   { id: "relay", label: t("供应商配置"), icon: KeyRound },
   { id: "sessions", label: t("会话管理"), icon: MessageCircle },
   { id: "context", label: t("工具与插件"), icon: Network },
-  { id: "enhance", label: t("Codex增强"), icon: Hammer },
+  { id: "enhance", label: t("Codex 增强"), icon: Hammer },
   { id: "zedRemote", label: t("Zed 远程项目"), icon: ExternalLink },
   { id: "userScripts", label: t("脚本市场"), icon: FileCode2 },
   { id: "maintenance", label: t("安装维护"), icon: Wrench },
   { id: "about", label: t("关于"), icon: Info },
   { id: "settings", label: t("设置"), icon: Settings },
+];
+
+const routeGroups: Array<{ label: string; items: Route[] }> = [
+  { label: t("工作台"), items: ["overview", "relay", "sessions", "context"] },
+  { label: t("扩展"), items: ["enhance", "zedRemote", "userScripts"] },
+  { label: t("系统"), items: ["maintenance", "about", "settings"] },
 ];
 
 const defaultSettings: BackendSettings = {
@@ -994,7 +1003,7 @@ export function App() {
     const result = await run(() => call<PendingProviderImportResult>("load_pending_provider_import"));
     if (result) {
       setPendingProviderImport(result.pending);
-      if (!silent && !isSuccessStatus(result.status)) showResultNotice(t("Codex++ 导入"), result, { silentSuccess: true });
+      if (!silent && !isSuccessStatus(result.status)) showResultNotice(t("Codex Deck 导入"), result, { silentSuccess: true });
     }
     return result;
   };
@@ -1005,7 +1014,7 @@ export function App() {
       setPendingProviderImport(null);
       setSettings(result);
       setSettingsForm(normalizeSettings(result.settings));
-      showResultNotice(t("Codex++ 导入"), result);
+      showResultNotice(t("Codex Deck 导入"), result);
       await refreshCcsProviders(true);
     }
   };
@@ -1014,7 +1023,7 @@ export function App() {
     const result = await run(() => call<PendingProviderImportResult>("dismiss_pending_provider_import"));
     if (result) {
       setPendingProviderImport(null);
-      showResultNotice(t("Codex++ 导入"), result, { silentSuccess: true });
+      showResultNotice(t("Codex Deck 导入"), result, { silentSuccess: true });
     }
   };
 
@@ -1233,7 +1242,7 @@ export function App() {
   const restart = async () => {
     const result = await launchCommand("restart_codex_plus");
     if (result) {
-      showNotice(t("重启 Codex++"), result.message, result.status);
+      showNotice(t("重启 Codex Deck"), result.message, result.status);
       await refreshOverview(true);
     }
   };
@@ -1612,7 +1621,7 @@ export function App() {
     if (result) {
       setSettings(result);
       setSettingsForm(normalizeSettings(result.settings));
-      if (!silent) showNotice(t("Codex增强模式"), result.message, result.status);
+      if (!silent) showNotice(t("Codex 增强模式"), result.message, result.status);
     }
     return result;
   };
@@ -1735,14 +1744,14 @@ export function App() {
     const switched = await clearRelayInjection(true);
     if (!switched) return;
     const result = await saveLaunchMode("relay", true);
-    if (result) showNotice(t("官方登录模式"), t("已切回官方登录；Codex增强已设为兼容增强。"), result.status);
+    if (result) showNotice(t("官方登录模式"), t("已切回官方登录；Codex 增强已设为兼容增强。"), result.status);
   };
 
   const switchPureApiMode = async () => {
     const switched = await applyPureApiInjection(true);
     if (!switched) return;
     const result = await saveLaunchMode("patch", true);
-    if (result) showNotice(t("纯 API 模式"), t("已切换到纯 API；Codex增强已设为完整增强。"), result.status);
+    if (result) showNotice(t("纯 API 模式"), t("已切换到纯 API；Codex 增强已设为完整增强。"), result.status);
   };
 
   const switchRelayProfile = async (next: BackendSettings, previousActiveRelayId = settingsForm.activeRelayId) => {
@@ -1912,7 +1921,7 @@ export function App() {
       void invoke("update_tray_labels", {
         showLabel: "Show window",
         quitLabel: "Quit",
-        windowTitle: "Codex++ Manager",
+        windowTitle: "Codex Deck",
       });
     }
   }, []);
@@ -2099,13 +2108,15 @@ export function App() {
   const hasUpdate = update?.updateAvailable === true;
 
   return (
-    <div className={`shell ${theme}`}>
+    <div className={`shell console-v2 ${theme}`}>
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">C++</div>
+          <div className="brand-mark">
+            <img alt="" aria-hidden="true" src={codexDeckLogo} />
+          </div>
           <div className="brand-copy">
             <div className="brand-title-row">
-              <div className="brand-title">Codex++</div>
+              <div className="brand-title">Codex Deck</div>
               {hasUpdate ? (
                 <button
                   className="update-dot"
@@ -2120,29 +2131,44 @@ export function App() {
                 </button>
               ) : null}
             </div>
-            <div className="brand-subtitle">{t("管理控制台")}</div>
+            <div className="brand-subtitle">{t("Codex 管理控制台")}</div>
           </div>
         </div>
-        <nav className="nav">
-          {routes.map((item) => {
-            const Icon = item.icon;
-            return (
-            <button
-              className={`nav-item ${route === item.id ? "active" : ""}`}
-              key={item.id}
-              onClick={() => void navigate(item.id)}
-              title={item.label}
-              type="button"
-            >
-              <span className="nav-icon">
-                <Icon className="h-4 w-4" aria-hidden="true" />
-              </span>
-              <span className="nav-label">{item.label}</span>
-              {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
-            </button>
-          );
-          })}
+        <nav aria-label={t("主导航")} className="nav">
+          {routeGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <div className="nav-group-label">{group.label}</div>
+              {group.items.map((routeId) => {
+                const item = routes.find((candidate) => candidate.id === routeId);
+                if (!item) return null;
+                const Icon = item.icon;
+                return (
+                  <button
+                    aria-current={route === item.id ? "page" : undefined}
+                    className={`nav-item ${route === item.id ? "active" : ""}`}
+                    key={item.id}
+                    onClick={() => void navigate(item.id)}
+                    title={item.label}
+                    type="button"
+                  >
+                    <span className="nav-icon">
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span className="nav-label">{item.label}</span>
+                    {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
+        <div className="sidebar-status" title={overview?.current_version ?? t("等待状态检查")}>
+          <span className={`sidebar-status-dot ${overview?.codex_version ? "online" : ""}`} aria-hidden="true" />
+          <div>
+            <strong>{overview?.codex_version ? t("Codex Deck 已就绪") : t("等待状态检查")}</strong>
+            <small>{overview?.current_version ?? t("正在连接本机 Codex")}</small>
+          </div>
+        </div>
       </aside>
       <main className="workspace">
         <header className="topbar" key={`topbar-${route}`}>
@@ -2152,6 +2178,7 @@ export function App() {
           </div>
           <div className="topbar-actions">
             <Button
+              aria-label={getLanguage() === "en" ? t("切换到中文") : t("切换到英文")}
               onClick={() => toggleLanguage()}
               size="icon"
               title={getLanguage() === "en" ? t("切换到中文") : t("切换到英文")}
@@ -2160,6 +2187,7 @@ export function App() {
               <Languages className="h-4 w-4" />
             </Button>
             <Button
+              aria-label={theme === "dark" ? t("切换到浅色") : t("切换到深色")}
               onClick={actions.toggleTheme}
               size="icon"
               title={theme === "dark" ? t("切换到浅色") : t("切换到深色")}
@@ -2167,11 +2195,17 @@ export function App() {
             >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button onClick={() => void actions.restart()} title={t("重启 Codex++")} variant="outline">
+            <Button onClick={() => void actions.restart()} title={t("重启 Codex Deck")} variant="outline">
               <Rocket className="h-4 w-4" />
-              {t("重启 Codex++")}
+              {t("重启 Codex Deck")}
             </Button>
-            <Button onClick={() => void actions.refreshCurrent()} size="icon" title={t("刷新当前页面")} variant="outline">
+            <Button
+              aria-label={t("刷新当前页面")}
+              onClick={() => void actions.refreshCurrent()}
+              size="icon"
+              title={t("刷新当前页面")}
+              variant="outline"
+            >
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
@@ -2390,63 +2424,137 @@ function OverviewScreen({
   actions: Actions;
 }) {
   const health = healthItems(overview);
+  const shortcutsReady = [overview?.silent_shortcut.status, overview?.management_shortcut.status]
+    .filter((status) => status === "installed").length;
+  const allHealthy = Boolean(overview?.codex_version) && health.every((item) => item.ok);
   return (
     <>
-      <Panel>
-        <CardHead title={t("健康检查")} detail={t("概览只展示关键问题，具体配置在对应页面处理")} />
-        <CardContent>
-          <div className="health-grid">
-            <div className={`health-item ${overview?.codex_version ? "ok" : "needs-fix"}`}>
-              {overview?.codex_version ? <CheckCircle2 className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
-              <div>
-                <strong>{t("Codex 版本")}</strong>
-                <span>{overview?.codex_version ?? t("未检测到 Codex 应用版本。")}</span>
-              </div>
-              <Badge status={overview?.codex_version ? "ok" : "not_checked"} />
-            </div>
-            {health.map((item) => (
-              <div className={`health-item ${item.ok ? "ok" : "needs-fix"}`} key={item.title}>
-                {item.ok ? <CheckCircle2 className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
-                <div>
-                  <strong>{item.title}</strong>
-                  <span>{item.detail}</span>
-                </div>
-                <Badge status={item.status} />
-              </div>
-            ))}
+      <section className="overview-summary" aria-labelledby="system-status-heading">
+        <div className="overview-section-head">
+          <div>
+            <h2 id="system-status-heading">{t("系统状态")}</h2>
+            <p>{t("优先展示影响 Codex 使用的问题")}</p>
           </div>
-          <Toolbar>
-            <Button onClick={() => void actions.checkHealth()}>
-              <RefreshCw className="h-4 w-4" />
-              {t("检查")}
-            </Button>
-            <Button variant="secondary" onClick={() => void actions.repairShortcuts()}>
-              <Wrench className="h-4 w-4" />
-              {t("修复入口")}
-            </Button>
-            <Button disabled={pluginMarketplaceProgress.active} variant="secondary" onClick={() => void actions.repairPluginMarketplace()}>
-              {pluginMarketplaceProgress.active ? t("正在修复…") : t("修复插件市场")}
-            </Button>
-          </Toolbar>
-          <TaskProgressBox progress={pluginMarketplaceProgress} title={t("插件市场修复进度")} />
-        </CardContent>
-      </Panel>
-      <Panel>
-        <CardHead title={t("最近启动")} detail={overview?.logs_path ?? t("暂无状态文件")} />
-        <CardContent>
-          <LatestLaunch status={overview?.latest_launch ?? null} />
-          <Toolbar>
-            <Button onClick={() => void actions.launch()}>
-              <Rocket className="h-4 w-4" />
-              {t("启动 Codex++")}
-            </Button>
-            <Button variant="secondary" onClick={() => void actions.goLogs()}>
-              {t("打开关于")}
-            </Button>
-          </Toolbar>
-        </CardContent>
-      </Panel>
+          <div className={`overview-health-state ${allHealthy ? "ready" : ""}`}>
+            <span aria-hidden="true" />
+            <Badge status={allHealthy ? "ok" : overview ? "missing" : "not_checked"} />
+          </div>
+        </div>
+        <div className="dashboard-metrics">
+          <DashboardMetric
+            icon={Gauge}
+            label={t("Codex 版本")}
+            status={overview?.codex_version ? "ok" : "not_checked"}
+            value={overview?.codex_version ?? t("未检测到")}
+          />
+          <DashboardMetric
+            icon={AppWindow}
+            label={t("Codex 应用")}
+            status={overview?.codex_app.status ?? "not_checked"}
+            tone="green"
+            value={statusLabel(overview?.codex_app.status ?? "not_checked")}
+          />
+          <DashboardMetric
+            icon={PanelTopOpen}
+            label={t("快捷入口")}
+            status={shortcutsReady === 2 ? "installed" : overview ? "missing" : "not_checked"}
+            value={`${shortcutsReady} / 2`}
+          />
+          <DashboardMetric
+            icon={Rocket}
+            label={t("最近启动")}
+            status={overview?.latest_launch?.status ?? "not_checked"}
+            tone="amber"
+            value={overview?.latest_launch?.status ? statusLabel(overview.latest_launch.status) : t("暂无记录")}
+          />
+        </div>
+      </section>
+
+      <div className="overview-main-grid">
+        <Panel className="overview-health-panel">
+          <CardHead title={t("健康检查")} detail={t("路径可复制，问题可在原位置修复")} />
+          <CardContent>
+            <div className="health-grid">
+              {health.map((item) => (
+                <div className={`health-item ${item.ok ? "ok" : "needs-fix"}`} key={item.title}>
+                  {item.ok ? <CheckCircle2 className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+                  <div>
+                    <strong>{item.title}</strong>
+                    <span>{item.detail}</span>
+                  </div>
+                  <Badge status={item.status} />
+                </div>
+              ))}
+            </div>
+            <Toolbar>
+              <Button onClick={() => void actions.checkHealth()} variant="outline">
+                <RefreshCw className="h-4 w-4" />
+                {t("重新检查")}
+              </Button>
+              <Button disabled={pluginMarketplaceProgress.active} variant="outline" onClick={() => void actions.repairPluginMarketplace()}>
+                {pluginMarketplaceProgress.active ? t("正在修复…") : t("修复插件市场")}
+              </Button>
+            </Toolbar>
+            <TaskProgressBox progress={pluginMarketplaceProgress} title={t("插件市场修复进度")} />
+          </CardContent>
+        </Panel>
+        <Panel className="overview-launch-panel">
+          <CardHead title={t("最近启动")} detail={overview?.latest_launch?.message ?? t("暂无启动状态")} />
+          <CardContent>
+            <LatestLaunch status={overview?.latest_launch ?? null} />
+            <Toolbar>
+              <Button variant="outline" onClick={() => void actions.goLogs()}>
+                {t("查看日志与诊断")}
+              </Button>
+            </Toolbar>
+          </CardContent>
+        </Panel>
+      </div>
+
+      <div className="overview-command-bar">
+        <div>
+          <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+          <span>{allHealthy ? t("全部关键状态正常") : t("存在待检查或待修复状态")}</span>
+        </div>
+        <Toolbar>
+          <Button variant="outline" onClick={() => void actions.repairShortcuts()}>
+            <Wrench className="h-4 w-4" />
+            {t("修复入口")}
+          </Button>
+          <Button onClick={() => void actions.launch()}>
+            <Rocket className="h-4 w-4" />
+            {t("启动 Codex")}
+          </Button>
+        </Toolbar>
+      </div>
     </>
+  );
+}
+
+function DashboardMetric({
+  icon: Icon,
+  label,
+  status,
+  tone = "blue",
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  status: string;
+  tone?: "blue" | "green" | "amber";
+  value: string;
+}) {
+  return (
+    <div className="dashboard-metric">
+      <span className={`dashboard-metric-icon ${tone}`}>
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <Badge status={status} />
+    </div>
   );
 }
 
@@ -2696,11 +2804,11 @@ function EnhanceScreen({
         String(remotePluginMarketplace.pluginCount),
         String(remotePluginMarketplace.skillCount),
       ])
-    : t("未发现本地缓存；点击按钮会从 Codex++ 内置快照释放并注册，无需官方账号预缓存。");
+    : t("未发现本地缓存；点击按钮会从 Codex Deck 内置快照释放并注册，无需官方账号预缓存。");
   return (
     <>
       <Panel>
-        <CardHead title={t("Codex增强")} detail={t("会话删除、导出、项目移动和用户脚本等界面能力")} />
+        <CardHead title={t("Codex 增强")} detail={t("会话删除、导出、项目移动和用户脚本等界面能力")} />
         <CardContent>
           <label className="switch-row">
             <input
@@ -2709,7 +2817,7 @@ function EnhanceScreen({
               type="checkbox"
             />
             <span>
-              <strong>{t("启用 Codex增强")}</strong>
+              <strong>{t("启用 Codex 增强")}</strong>
               <small>{t("关闭后会停用删除、导出、项目移动、插件相关和菜单位置增强。")}</small>
             </span>
           </label>
@@ -2740,7 +2848,7 @@ function EnhanceScreen({
               <div className="feature-action-row">
                 <div>
                   <strong>{t("官方远端插件缓存")}</strong>
-                  <small>{t("使用 Codex++ 内置快照补齐远端插件，API 模式也可显示和安装 Product Design 插件。")}</small>
+                  <small>{t("使用 Codex Deck 内置快照补齐远端插件，API 模式也可显示和安装 Product Design 插件。")}</small>
                   <small>{remoteMarketplaceSummary}</small>
                 </div>
                 <Badge status={remotePluginMarketplace?.configRegistered ? "ok" : "not_checked"} />
@@ -2779,12 +2887,12 @@ function EnhanceScreen({
               {isWindowsPlatform ? <FeatureToggle title={t("桌宠跟随真实鼠标")} detail={t("仅支持 V2 桌宠；不会修改宠物文件。将 V2 的 Computer Use 光标朝向动作映射到真实鼠标，V1 开启后安全不生效；拖拽、原生悬停或 Computer Use 活跃时自动让步。")} checked={form.codexAppPetRealMouseLook} disabled={!masterEnabled} onChange={(value) => setPersistedEnhanceFlag("codexAppPetRealMouseLook", value)} /> : null}
               <FeatureToggle title={t("强制中文界面")} detail={t("强制启用 Codex App 内置 zh-CN 语言包，避免 Statsig/VPN 不通时回退英文。需重启 Codex 才能完整生效。")} checked={form.codexAppForceChineseLocale} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppForceChineseLocale", value)} />
               <FeatureToggle title={t("快速启动")} detail={t("默认关闭；无 VPN 时可开启，让 Statsig 初始化快速失败，减少启动时长。需重启 Codex 才生效。")} checked={form.codexAppFastStartup} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppFastStartup", value)} />
-              <FeatureToggle title={t("原生菜单栏位置")} detail={t("把 Codex++ 菜单插入 Codex 顶部原生菜单栏。")} checked={form.codexAppNativeMenuPlacement} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppNativeMenuPlacement", value)} />
+              <FeatureToggle title={t("原生菜单栏位置")} detail={t("把 Codex Deck 菜单插入 Codex 顶部原生菜单栏。")} checked={form.codexAppNativeMenuPlacement} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppNativeMenuPlacement", value)} />
               <FeatureToggle title={t("原生菜单汉化")} detail={t("启动时通过本地主进程调试端口汉化 Codex 原生菜单；不修改安装包。需重启 Codex 才生效。")} checked={form.codexAppNativeMenuLocalization} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppNativeMenuLocalization", value)} />
             </FeatureGroup>
             <FeatureGroup title={t("远程项目")} detail={t("连接 Zed Remote 和 upstream worktree 辅助能力。")}>
               <FeatureToggle title="Zed Remote open" detail={t("远程 SSH 文件引用可直接用 Zed Remote Development 打开。")} checked={form.codexAppZedRemoteOpen} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppZedRemoteOpen", value)} />
-              <FeatureToggle title={t("Zed 项目记录")} detail={t("维护 Codex++ 自己的远程项目最近列表。")} checked={form.zedRemoteProjectRegistryEnabled} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("zedRemoteProjectRegistryEnabled", value)} />
+              <FeatureToggle title={t("Zed 项目记录")} detail={t("维护 Codex Deck 自己的远程项目最近列表。")} checked={form.zedRemoteProjectRegistryEnabled} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("zedRemoteProjectRegistryEnabled", value)} />
               <FeatureToggle title={t("同步 Zed settings")} detail={t("高级选项，默认关闭；当前实现不主动改写 Zed settings。")} checked={form.zedRemoteSyncToZedSettings} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("zedRemoteSyncToZedSettings", value)} />
               <FeatureToggle title="Upstream worktree" detail={t("从最新 upstream 分支创建 Git worktree。")} checked={form.codexAppUpstreamWorktreeCreate} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppUpstreamWorktreeCreate", value)} />
             </FeatureGroup>
@@ -2854,7 +2962,7 @@ function ZedRemoteScreen({
   return (
     <>
       <Panel>
-        <CardHead title={t("Zed 远程项目")} detail={tf("{0} 个 Codex++ 可识别项目，默认策略：{1}", [allProjects.length, zedStrategyLabel(form.zedRemoteOpenStrategy)])} />
+        <CardHead title={t("Zed 远程项目")} detail={tf("{0} 个 Codex Deck 可识别项目，默认策略：{1}", [allProjects.length, zedStrategyLabel(form.zedRemoteOpenStrategy)])} />
         <CardContent>
           <div className="metric-list">
             <Metric label="Current" value={String(currentProjects.length)} />
@@ -2882,7 +2990,7 @@ function ZedRemoteScreen({
               />
               <span>
                 <strong>{t("记录最近打开")}</strong>
-                <small>{t("保存到 Codex++ state，不改写 Zed settings。")}</small>
+                <small>{t("保存到 Codex Deck state，不改写 Zed settings。")}</small>
               </span>
             </label>
           </div>
@@ -3159,7 +3267,7 @@ function SessionsScreen({
             />
             <span>
               <strong>{t("启动前自动修复历史会话")}</strong>
-              <small>{t("开启后，通过 Codex++ 启动 Codex 前自动整理一次旧对话的归属标记。")}</small>
+              <small>{t("开启后，通过 Codex Deck 启动 Codex 前自动整理一次旧对话的归属标记。")}</small>
             </span>
           </label>
           <Toolbar>
@@ -3272,7 +3380,7 @@ function MaintenanceScreen({
         <CardContent>
           <label className="check-row">
             <input checked={removeOwnedData} onChange={(event) => onRemoveOwnedDataChange(event.currentTarget.checked)} type="checkbox" />
-            <span>{t("卸载时移除 Codex++ 托管数据")}</span>
+            <span>{t("卸载时移除 Codex Deck 托管数据")}</span>
           </label>
           <Toolbar>
             <Button onClick={() => void actions.installEntrypoints()}>{t("安装入口")}</Button>
@@ -3282,7 +3390,7 @@ function MaintenanceScreen({
         </CardContent>
       </Panel>
       <Panel>
-        <CardHead title={t("自动接管")} detail={t("Watcher 用于保持 Codex++ 接管状态")} />
+        <CardHead title={t("自动接管")} detail={t("Watcher 用于保持 Codex Deck 接管状态")} />
         <CardContent>
           <Toolbar>
             <Button variant="secondary" onClick={() => void actions.installWatcher()}>{t("安装 watcher")}</Button>
@@ -3338,7 +3446,7 @@ function MaintenanceScreen({
             </Field>
           </div>
           <Toolbar>
-            <Button onClick={() => void actions.launch()}>{t("启动 Codex++")}</Button>
+            <Button onClick={() => void actions.launch()}>{t("启动 Codex")}</Button>
             <Button variant="secondary" onClick={() => void actions.saveManualCodexAppPath()}>
               {t("保存为默认路径")}
             </Button>
@@ -3367,19 +3475,20 @@ function AboutScreen({
   return (
     <>
       <Panel>
-        <CardHead title={t("关于 Codex++")} detail={t("本地 Codex 增强、管理工具和安装包维护")} />
+        <CardHead title={t("关于 Codex Deck")} detail={t("本地 Codex 增强、管理工具和安装包维护")} />
         <CardContent>
           <div className="metric-list">
-            <Metric label={t("Codex++ 版本")} value={overview?.current_version ?? update?.currentVersion ?? "-"} />
+            <Metric label={t("Codex Deck 版本")} value={overview?.current_version ?? update?.currentVersion ?? "-"} />
             <Metric label={t("Codex 版本")} value={overview?.codex_version ?? t("未检测到")} />
-            <Metric label={t("项目地址")} value="github.com/xiamingjie123/-codexplus" />
+            <Metric label={t("项目地址")} value="github.com/nanzheyin/-codexplus" />
           </div>
+          <p className="about-disclaimer">{t("第三方非官方 Codex 管理工具，与 OpenAI 无隶属或背书关系。")}</p>
           <Toolbar>
-            <Button onClick={() => void actions.openExternalUrl("https://github.com/xiamingjie123/-codexplus")} variant="secondary">
+            <Button onClick={() => void actions.openExternalUrl("https://github.com/nanzheyin/-codexplus")} variant="secondary">
               <ExternalLink className="h-4 w-4" />
               {t("打开项目主页")}
             </Button>
-            <Button onClick={() => void actions.openExternalUrl("https://github.com/xiamingjie123/-codexplus/issues")} variant="secondary">
+            <Button onClick={() => void actions.openExternalUrl("https://github.com/nanzheyin/-codexplus/issues")} variant="secondary">
               <ExternalLink className="h-4 w-4" />
               {t("反馈问题")}
             </Button>
@@ -3458,7 +3567,7 @@ function SettingsScreen({
           <div className="settings-block vision-relay-settings-block">
             <div className="section-title">{t("视觉模型中转（VL）")}</div>
             <p className="field-hint">
-              {t("纯文本模型（如 DeepSeek-V4/GLM-5.2等）默认不识别图片。开启后，Codex++ 会先调此处配置的视觉模型 API 把图片翻译为文字，再交给纯文本模型；VL 不可用时自动降级为丢弃图片。")}
+              {t("纯文本模型（如 DeepSeek-V4/GLM-5.2等）默认不识别图片。开启后，Codex Deck 会先调此处配置的视觉模型 API 把图片翻译为文字，再交给纯文本模型；VL 不可用时自动降级为丢弃图片。")}
               {t("上下文窗口特指调用视觉模型的窗口长度，窗口范围内的图片及文字整体发给视觉模型调用 VL；0 表示不限制。此设置只影响 VL 处理范围，不影响主对话的压缩阈值。")}
             </p>
             <label className="switch-row">
@@ -4333,7 +4442,7 @@ function RelayProfileEditor({
             <span>{t("启用目标续跑保护")}</span>
           </label>
           <p className="field-hint">
-            {t("检测到目标上下文时，Codex++ 会在中转请求中追加续跑保护提示，减少压缩后重做旧任务。")}
+            {t("检测到目标上下文时，Codex Deck 会在中转请求中追加续跑保护提示，减少压缩后重做旧任务。")}
           </p>
         </Field>
         <div className="relay-advanced-toggle">
@@ -4466,7 +4575,7 @@ function RelayProfileEditor({
                       checked={row.textOnly}
                       disabled={!row.model.trim()}
                       onChange={(event) => updateModelWindowRow(index, { textOnly: event.currentTarget.checked })}
-                      title={t("仅 Chat Completions 协议生效：标记为纯文本模型（DeepSeek-V4/GLM-5.2 等），Codex++ 在转发前静默丢弃 input_image；务必同时在 Codex++ 设置中配置支持图片输入的模型以解析 input_image")}
+                      title={t("仅 Chat Completions 协议生效：标记为纯文本模型（DeepSeek-V4/GLM-5.2 等），Codex Deck 在转发前静默丢弃 input_image；务必同时在 Codex Deck 设置中配置支持图片输入的模型以解析 input_image")}
                       type="checkbox"
                     />
                   </label>
@@ -4475,7 +4584,7 @@ function RelayProfileEditor({
                       checked={row.noReasoning}
                       disabled={!row.model.trim()}
                       onChange={(event) => updateModelWindowRow(index, { noReasoning: event.currentTarget.checked })}
-                      title={t("勾选以标记为不支持 reasoning 的模型（如 kimi-2.6 on Ark），Codex++ 会在透传前剥除 reasoning 字段")}
+                      title={t("勾选以标记为不支持 reasoning 的模型（如 kimi-2.6 on Ark），Codex Deck 会在透传前剥除 reasoning 字段")}
                       type="checkbox"
                     />
                   </label>
@@ -4527,7 +4636,7 @@ function RelayProfileEditor({
             <p className="field-hint">
               {t("每行一个模型；上下文窗口可填")} <code>1M</code>{t("、")}<code>200K</code> {t("或")} <code>1000000</code>{t("，留空表示使用 Codex 默认长度。")}
               <br />
-              {t("以下仅在选择 Chat Completions 协议时生效：勾选「只支持文本」可标记为纯文本模型（DeepSeek-V4/GLM-5.2等），Codex++ 会在转发前静默丢弃 input_image；务必同时在 Codex++ 设置中配置支持图片输入的模型，input_image 将由该模型解析。")}
+              {t("以下仅在选择 Chat Completions 协议时生效：勾选「只支持文本」可标记为纯文本模型（DeepSeek-V4/GLM-5.2等），Codex Deck 会在转发前静默丢弃 input_image；务必同时在 Codex Deck 设置中配置支持图片输入的模型，input_image 将由该模型解析。")}
             </p>
           </Field>
         ) : null}
@@ -4544,7 +4653,7 @@ function RelayProfileEditor({
       {showApiFields && profile.protocol === "chatCompletions" ? (
         <div className="hint-line relay-protocol-hint">
           <MessageCircle className="h-4 w-4" />
-          <span>{t("此上游会通过本地 127.0.0.1:57321 转成 Responses API，需要从 Codex++ 启动 Codex。")}</span>
+          <span>{t("此上游会通过本地 127.0.0.1:57321 转成 Responses API，需要从 Codex Deck 启动 Codex。")}</span>
         </div>
       ) : null}
       <div className="hint-line relay-protocol-hint">
@@ -5391,8 +5500,8 @@ function PendingProviderImportDialog({
       <div className="modal-card provider-import-modal">
         <div className="modal-head">
           <div>
-            <h2>{t("导入 Codex++ 供应商")}</h2>
-            <p>{t("检测到来自网页的供应商配置导入请求，确认后会写入本机 Codex++ 管理工具。")}</p>
+            <h2>{t("导入 Codex Deck 供应商")}</h2>
+            <p>{t("检测到来自网页的供应商配置导入请求，确认后会写入本机 Codex Deck 管理工具。")}</p>
           </div>
           <button className="toast-close" onClick={onDismiss} type="button">×</button>
         </div>
@@ -6198,7 +6307,7 @@ function healthItems(overview: OverviewResult | null) {
       title: t("静默启动入口"),
       status: overview?.silent_shortcut.status ?? "not_checked",
       ok: overview?.silent_shortcut.status === "installed",
-      detail: overview?.silent_shortcut.path || t("缺少 Codex++ 静默启动快捷方式时可在安装维护页修复。"),
+      detail: overview?.silent_shortcut.path || t("缺少 Codex Deck 静默启动快捷方式时可在安装维护页修复。"),
     },
     {
       title: t("管理工具入口"),
@@ -6484,14 +6593,14 @@ function relayProfileModeHelp(profile: RelayProfile): string {
   }
   if (profile.relayMode === "official") {
     if (profile.officialMixApiKey) {
-      return t("此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex增强仍使用兼容模式。");
+      return t("此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex 增强仍使用兼容模式。");
     }
     return t("此供应商会切回官方登录模式，使用 ChatGPT 官方账号，不写入 API Key。");
   }
   if (profile.relayMode === "pureApi") {
     return t("此供应商会同时写入 config.toml 和 auth.json；API Key 也会注入到 provider bearer token。");
   }
-  return t("此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex增强仍使用兼容模式。");
+  return t("此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex 增强仍使用兼容模式。");
 }
 
 function relayProfileReadinessText(profile: RelayProfile, relay: RelayResult | null): string {

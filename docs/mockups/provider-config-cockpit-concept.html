@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Deck 供应商配置改造概念图</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        --shell: #f3f5f9;
+        --surface: #ffffff;
+        --surface-soft: #f7f9fc;
+        --surface-blue: #f2f6ff;
+        --text: #171b25;
+        --muted: #687386;
+        --subtle: #9aa5b5;
+        --border: #dce2eb;
+        --border-strong: #cbd4e1;
+        --blue: #2563eb;
+        --blue-dark: #1d4ed8;
+        --blue-soft: #e8f0ff;
+        --teal: #0f9f9a;
+        --green: #15a66f;
+        --green-soft: #e9f8f1;
+        --amber: #e59b18;
+        --amber-soft: #fff6df;
+        --red: #dc4c4c;
+        --shadow: 0 14px 34px rgba(31, 42, 61, 0.09);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      /* 避免 CodexPlusPlus 网页注入菜单遮挡本地设计预览。 */
+      #codex-plus-menu {
+        display: none !important;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-width: 980px;
+        min-height: 100%;
+        margin: 0;
+        background: var(--shell);
+        color: var(--text);
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      .page {
+        min-height: 900px;
+        background: var(--shell);
+      }
+
+      .topbar {
+        height: 104px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 0 34px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.84);
+      }
+
+      .title-block {
+        min-width: 0;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.2;
+        font-weight: 760;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .top-actions,
+      .toolbar-actions,
+      .card-actions,
+      .view-switch,
+      .master-control {
+        display: flex;
+        align-items: center;
+      }
+
+      .top-actions {
+        gap: 10px;
+      }
+
+      .button,
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 40px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        cursor: default;
+      }
+
+      .button {
+        padding: 0 14px;
+        font-weight: 650;
+      }
+
+      .icon-button {
+        width: 40px;
+        padding: 0;
+      }
+
+      .icon-button.primary {
+        border-color: var(--blue);
+        background: var(--blue);
+        color: #fff;
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
+      }
+
+      .icon-button.soft-blue {
+        border-color: #c9d8fb;
+        background: var(--blue-soft);
+        color: var(--blue-dark);
+      }
+
+      .button svg,
+      .icon-button svg {
+        width: 18px;
+        height: 18px;
+        stroke-width: 2;
+      }
+
+      main {
+        padding: 28px 34px 42px;
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(260px, 1.55fr) auto minmax(150px, 0.65fr) minmax(170px, 0.75fr) auto auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 88px;
+        padding: 18px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .search {
+        position: relative;
+        min-width: 0;
+      }
+
+      .search svg {
+        position: absolute;
+        top: 50%;
+        left: 14px;
+        width: 19px;
+        height: 19px;
+        transform: translateY(-50%);
+        color: #8996aa;
+      }
+
+      .search input,
+      .select-like {
+        width: 100%;
+        height: 48px;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--surface-soft);
+        color: var(--text);
+      }
+
+      .search input {
+        padding: 0 14px 0 44px;
+        font-size: 15px;
+        outline: 0;
+      }
+
+      .search input::placeholder {
+        color: #96a3b6;
+      }
+
+      .view-switch {
+        height: 48px;
+        padding: 4px;
+        gap: 4px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-soft);
+      }
+
+      .view-switch button {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .view-switch button.active {
+        background: var(--blue);
+        color: #fff;
+        box-shadow: 0 5px 12px rgba(37, 99, 235, 0.22);
+      }
+
+      .view-switch svg {
+        width: 19px;
+        height: 19px;
+      }
+
+      .select-like {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 0 13px;
+        font-weight: 640;
+        white-space: nowrap;
+      }
+
+      .select-like span {
+        display: inline-flex;
+        align-items: center;
+        min-width: 0;
+        gap: 8px;
+      }
+
+      .select-like svg {
+        width: 17px;
+        height: 17px;
+        flex: 0 0 auto;
+        color: var(--muted);
+      }
+
+      .master-control {
+        height: 48px;
+        gap: 10px;
+        padding: 0 12px;
+        border: 1px solid #bfe2d5;
+        border-radius: 8px;
+        background: var(--green-soft);
+        white-space: nowrap;
+      }
+
+      .master-label {
+        display: grid;
+        gap: 1px;
+      }
+
+      .master-label strong {
+        font-size: 13px;
+      }
+
+      .master-label small {
+        color: #32836a;
+        font-size: 11px;
+      }
+
+      .switch {
+        position: relative;
+        width: 36px;
+        height: 20px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--green);
+      }
+
+      .switch::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      }
+
+      .toolbar-actions {
+        gap: 8px;
+      }
+
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 24px 2px 14px;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .section-title h2 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 750;
+      }
+
+      .section-title span,
+      .section-state {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .section-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgba(21, 166, 111, 0.12);
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .provider-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 352px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: 0 10px 25px rgba(31, 42, 61, 0.075);
+      }
+
+      .provider-card.current {
+        border: 2px solid var(--blue);
+        box-shadow: 0 14px 32px rgba(37, 99, 235, 0.13);
+      }
+
+      .card-body {
+        flex: 1;
+        padding: 20px 20px 16px;
+      }
+
+      .card-head {
+        display: grid;
+        grid-template-columns: 28px 42px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .drag {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 34px;
+        color: #a1acbb;
+      }
+
+      .drag svg {
+        width: 17px;
+        height: 17px;
+      }
+
+      .provider-mark {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 8px;
+        background: var(--blue-soft);
+        color: var(--blue-dark);
+        font-size: 18px;
+        font-weight: 760;
+      }
+
+      .provider-mark.teal {
+        background: #e6f7f6;
+        color: #0a817d;
+      }
+
+      .provider-mark.amber {
+        background: var(--amber-soft);
+        color: #a86705;
+      }
+
+      .provider-name {
+        min-width: 0;
+      }
+
+      .provider-name strong {
+        display: block;
+        overflow: hidden;
+        color: var(--text);
+        font-size: 16px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .provider-name small {
+        display: block;
+        margin-top: 4px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .badges {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 26px;
+        padding: 0 10px;
+        border-radius: 999px;
+        background: var(--blue-soft);
+        color: var(--blue-dark);
+        font-size: 12px;
+        font-weight: 760;
+        white-space: nowrap;
+      }
+
+      .badge.current {
+        background: var(--green-soft);
+        color: #0d8b5d;
+      }
+
+      .badge.aggregate {
+        background: #e5f8f7;
+        color: #087e7a;
+      }
+
+      .details {
+        display: grid;
+        gap: 14px;
+        margin-top: 24px;
+      }
+
+      .detail-row {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+      }
+
+      .detail-row > svg {
+        width: 17px;
+        height: 17px;
+        color: #8794a8;
+      }
+
+      .detail-label {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .detail-value {
+        max-width: 220px;
+        overflow: hidden;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 680;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .detail-value.url {
+        color: var(--blue-dark);
+        font-family: "Cascadia Code", Consolas, monospace;
+        font-size: 12px;
+        font-weight: 560;
+      }
+
+      .health {
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid #e8ecf2;
+      }
+
+      .health-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 9px;
+      }
+
+      .health-head span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .health-head strong {
+        color: var(--green);
+        font-size: 14px;
+      }
+
+      .health-head strong.amber {
+        color: var(--amber);
+      }
+
+      .meter {
+        height: 7px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #edf1f6;
+      }
+
+      .meter span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--green);
+      }
+
+      .meter span.amber {
+        background: var(--amber);
+      }
+
+      .card-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 62px;
+        padding: 11px 16px 11px 20px;
+        border-top: 1px solid var(--border);
+        background: #fbfcfe;
+      }
+
+      .checked-time {
+        display: inline-flex;
+        align-items: center;
+        min-width: 0;
+        gap: 7px;
+        color: var(--subtle);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .checked-time svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .card-actions {
+        gap: 6px;
+      }
+
+      .card-actions .icon-button {
+        width: 34px;
+        height: 34px;
+        border-color: transparent;
+        background: #eef2f7;
+        color: #59677b;
+      }
+
+      .card-actions .icon-button.active {
+        background: var(--blue-soft);
+        color: var(--blue-dark);
+      }
+
+      .card-actions .icon-button.danger {
+        color: #9a5a5a;
+      }
+
+      .card-actions svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      .mockup-note {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 18px 2px 0;
+        color: #778397;
+        font-size: 12px;
+      }
+
+      .mockup-note svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      @media (max-width: 1360px) {
+        .toolbar {
+          grid-template-columns: minmax(260px, 1fr) auto minmax(140px, 0.6fr) minmax(150px, 0.65fr);
+        }
+
+        .master-control {
+          width: fit-content;
+          grid-column: 1 / 3;
+        }
+
+        .toolbar-actions {
+          grid-column: 3 / 5;
+          justify-self: end;
+        }
+      }
+
+      @media (max-width: 1100px) {
+        .cards {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .toolbar {
+          grid-template-columns: minmax(260px, 1fr) auto minmax(150px, 0.7fr);
+        }
+
+        .select-like:nth-of-type(2) {
+          grid-column: 1 / 2;
+        }
+
+        .master-control {
+          grid-column: 2 / 3;
+        }
+
+        .toolbar-actions {
+          grid-column: 3 / 4;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="title-block">
+          <h1>供应商配置</h1>
+          <p class="subtitle">管理 Codex API 供应商、协议、Key 与配置文件</p>
+        </div>
+        <div class="top-actions" aria-label="页面操作">
+          <button class="icon-button" title="切换语言" type="button"><i data-lucide="languages"></i></button>
+          <button class="icon-button" title="切换主题" type="button"><i data-lucide="moon"></i></button>
+          <button class="button" type="button"><i data-lucide="rocket"></i><span>重启 Codex Deck</span></button>
+          <button class="icon-button" title="刷新页面" type="button"><i data-lucide="refresh-cw"></i></button>
+        </div>
+      </header>
+
+      <main>
+        <section class="toolbar" aria-label="供应商工具栏">
+          <label class="search">
+            <i data-lucide="search"></i>
+            <input aria-label="搜索供应商" placeholder="搜索供应商名称或 Base URL..." type="text" />
+          </label>
+
+          <div class="view-switch" aria-label="切换视图">
+            <button title="列表视图" type="button"><i data-lucide="list"></i></button>
+            <button class="active" title="卡片视图" type="button"><i data-lucide="layout-grid"></i></button>
+          </div>
+
+          <button class="select-like" type="button">
+            <span><i data-lucide="filter"></i>全部 (3)</span>
+            <i data-lucide="chevron-down"></i>
+          </button>
+
+          <button class="select-like" type="button">
+            <span><i data-lucide="arrow-down-wide-narrow"></i>手动顺序</span>
+            <i data-lucide="chevron-down"></i>
+          </button>
+
+          <div class="master-control" title="启用供应商配置切换">
+            <div class="switch" aria-hidden="true"></div>
+            <span class="master-label"><strong>供应商切换</strong><small>已启用</small></span>
+          </div>
+
+          <div class="toolbar-actions">
+            <button class="icon-button primary" title="添加供应商" type="button"><i data-lucide="plus"></i></button>
+            <button class="icon-button" title="从第三方导入" type="button"><i data-lucide="download"></i></button>
+            <button class="icon-button" title="刷新延迟" type="button"><i data-lucide="refresh-cw"></i></button>
+          </div>
+        </section>
+
+        <div class="section-head">
+          <div class="section-title"><h2>供应商</h2><span>3 个配置</span></div>
+          <div class="section-state"><span class="status-dot"></span>当前配置可正常切换</div>
+        </div>
+
+        <section class="cards" aria-label="供应商卡片">
+          <article class="provider-card current">
+            <div class="card-body">
+              <div class="card-head">
+                <span class="drag" title="拖动排序"><i data-lucide="grip-vertical"></i></span>
+                <span class="provider-mark">默</span>
+                <span class="provider-name"><strong>默认中转</strong><small>Responses API</small></span>
+                <span class="badges"><span class="badge current">当前</span><span class="badge">纯 API</span></span>
+              </div>
+
+              <div class="details">
+                <div class="detail-row"><i data-lucide="waypoints"></i><span class="detail-label">协议</span><span class="detail-value">Responses API</span></div>
+                <div class="detail-row"><i data-lucide="link-2"></i><span class="detail-label">Base URL</span><span class="detail-value url">https://gptpro.live/v1</span></div>
+                <div class="detail-row"><i data-lucide="boxes"></i><span class="detail-label">模型配置</span><span class="detail-value">8 个模型</span></div>
+              </div>
+
+              <div class="health">
+                <div class="health-head"><span>连接延迟</span><strong class="amber">657 ms</strong></div>
+                <div class="meter"><span class="amber" style="width: 62%"></span></div>
+              </div>
+            </div>
+            <footer class="card-footer">
+              <span class="checked-time"><i data-lucide="clock-3"></i>刚刚检测</span>
+              <span class="card-actions">
+                <button class="icon-button active" title="当前正在使用" type="button"><i data-lucide="circle-check"></i></button>
+                <button class="icon-button" title="发送测试请求" type="button"><i data-lucide="flask-conical"></i></button>
+                <button class="icon-button" title="编辑" type="button"><i data-lucide="pencil"></i></button>
+                <button class="icon-button danger" title="删除" type="button"><i data-lucide="trash-2"></i></button>
+              </span>
+            </footer>
+          </article>
+
+          <article class="provider-card">
+            <div class="card-body">
+              <div class="card-head">
+                <span class="drag" title="拖动排序"><i data-lucide="grip-vertical"></i></span>
+                <span class="provider-mark amber">备</span>
+                <span class="provider-name"><strong>备用通道</strong><small>Chat Completions</small></span>
+                <span class="badges"><span class="badge">纯 API</span></span>
+              </div>
+
+              <div class="details">
+                <div class="detail-row"><i data-lucide="waypoints"></i><span class="detail-label">协议</span><span class="detail-value">Chat Completions</span></div>
+                <div class="detail-row"><i data-lucide="link-2"></i><span class="detail-label">Base URL</span><span class="detail-value url">https://api.example.com/v1</span></div>
+                <div class="detail-row"><i data-lucide="boxes"></i><span class="detail-label">模型配置</span><span class="detail-value">6 个模型</span></div>
+              </div>
+
+              <div class="health">
+                <div class="health-head"><span>连接延迟</span><strong>238 ms</strong></div>
+                <div class="meter"><span style="width: 88%"></span></div>
+              </div>
+            </div>
+            <footer class="card-footer">
+              <span class="checked-time"><i data-lucide="clock-3"></i>2 分钟前检测</span>
+              <span class="card-actions">
+                <button class="icon-button" title="设为当前" type="button"><i data-lucide="play"></i></button>
+                <button class="icon-button" title="发送测试请求" type="button"><i data-lucide="flask-conical"></i></button>
+                <button class="icon-button" title="编辑" type="button"><i data-lucide="pencil"></i></button>
+                <button class="icon-button danger" title="删除" type="button"><i data-lucide="trash-2"></i></button>
+              </span>
+            </footer>
+          </article>
+
+          <article class="provider-card">
+            <div class="card-body">
+              <div class="card-head">
+                <span class="drag" title="拖动排序"><i data-lucide="grip-vertical"></i></span>
+                <span class="provider-mark teal">聚</span>
+                <span class="provider-name"><strong>团队聚合</strong><small>成员轮转</small></span>
+                <span class="badges"><span class="badge aggregate">聚合</span></span>
+              </div>
+
+              <div class="details">
+                <div class="detail-row"><i data-lucide="workflow"></i><span class="detail-label">轮转策略</span><span class="detail-value">按优先级轮转</span></div>
+                <div class="detail-row"><i data-lucide="network"></i><span class="detail-label">成员供应商</span><span class="detail-value">3 个成员</span></div>
+                <div class="detail-row"><i data-lucide="shield-check"></i><span class="detail-label">可用成员</span><span class="detail-value">3 / 3</span></div>
+              </div>
+
+              <div class="health">
+                <div class="health-head"><span>成员健康度</span><strong>100%</strong></div>
+                <div class="meter"><span style="width: 100%"></span></div>
+              </div>
+            </div>
+            <footer class="card-footer">
+              <span class="checked-time"><i data-lucide="clock-3"></i>1 分钟前检测</span>
+              <span class="card-actions">
+                <button class="icon-button" title="设为当前" type="button"><i data-lucide="play"></i></button>
+                <button class="icon-button" title="查看成员" type="button"><i data-lucide="users"></i></button>
+                <button class="icon-button" title="编辑" type="button"><i data-lucide="pencil"></i></button>
+                <button class="icon-button danger" title="删除" type="button"><i data-lucide="trash-2"></i></button>
+              </span>
+            </footer>
+          </article>
+        </section>
+
+        <p class="mockup-note"><i data-lucide="info"></i>概念图使用示例数据展示单一 API、备用 API 与聚合供应商三种状态。</p>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script>
+      window.addEventListener("load", () => window.lucide?.createIcons());
+    </script>
+  </body>
+</html>

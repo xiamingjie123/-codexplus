@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 将 GitHub `origin`、在线更新源、项目主页、反馈入口和维护文档迁移到 `nanzheyin/-codexplus`。
+
 ## 1.2.46 - 2026-07-15
 
 - 自动发布 `main` 分支最新提交。

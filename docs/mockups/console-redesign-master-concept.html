@@ -1,0 +1,1580 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Deck 管理控制台统一改造概念</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        --shell: #f3f5f9;
+        --nav: #ffffff;
+        --surface: #ffffff;
+        --surface-soft: #f7f9fc;
+        --surface-blue: #edf3ff;
+        --text: #171b25;
+        --muted: #667085;
+        --subtle: #98a3b4;
+        --border: #dce3ec;
+        --border-strong: #cbd5e1;
+        --blue: #2563eb;
+        --blue-dark: #1d4ed8;
+        --green: #159f6b;
+        --green-soft: #e9f8f1;
+        --teal: #0d9488;
+        --amber: #d99012;
+        --amber-soft: #fff6df;
+        --red: #d64545;
+        --red-soft: #fff0f0;
+        --shadow: 0 12px 30px rgba(31, 42, 61, 0.08);
+      }
+
+      .dark {
+        color-scheme: dark;
+        --shell: #0f1218;
+        --nav: #141923;
+        --surface: #181e28;
+        --surface-soft: #202733;
+        --surface-blue: #1b2c4e;
+        --text: #f4f6fa;
+        --muted: #9ba7b8;
+        --subtle: #778397;
+        --border: #2d3645;
+        --border-strong: #3a4658;
+        --blue: #5b8def;
+        --blue-dark: #8db0f7;
+        --green: #35c58a;
+        --green-soft: #153a2c;
+        --amber: #f0b34a;
+        --amber-soft: #3b2b11;
+        --red: #f06b6b;
+        --red-soft: #3e1d22;
+        --shadow: 0 12px 30px rgba(0, 0, 0, 0.26);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      #codex-plus-menu {
+        display: none !important;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-width: 1120px;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--shell);
+        color: var(--text);
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        width: 100vw;
+        height: 100vh;
+        background: var(--shell);
+        color: var(--text);
+      }
+
+      .sidebar {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+        background: var(--nav);
+        padding: 16px 12px 14px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        min-height: 58px;
+        padding: 0 10px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        flex: 0 0 auto;
+        border-radius: 8px;
+        box-shadow: 0 6px 14px rgba(37, 99, 235, 0.22);
+      }
+
+      .brand-mark img {
+        display: block;
+        width: 40px;
+        height: 40px;
+      }
+
+      .brand-copy {
+        min-width: 0;
+      }
+
+      .brand-copy strong,
+      .brand-copy span {
+        display: block;
+      }
+
+      .brand-copy strong {
+        font-size: 15px;
+      }
+
+      .brand-copy span {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .nav-scroll {
+        min-height: 0;
+        flex: 1;
+        overflow: hidden;
+        padding-top: 12px;
+      }
+
+      .nav-group + .nav-group {
+        margin-top: 11px;
+      }
+
+      .nav-group-label {
+        display: block;
+        margin: 0 10px 5px;
+        color: var(--subtle);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .nav-item {
+        position: relative;
+        display: grid;
+        grid-template-columns: 26px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-height: 38px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        padding: 0 10px;
+        text-align: left;
+      }
+
+      .nav-item + .nav-item {
+        margin-top: 2px;
+      }
+
+      .nav-item.active {
+        background: var(--surface-blue);
+        color: var(--blue-dark);
+        font-weight: 700;
+      }
+
+      .nav-item.active::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 8px;
+        width: 3px;
+        height: 22px;
+        border-radius: 0 3px 3px 0;
+        background: var(--blue);
+      }
+
+      .nav-item svg {
+        width: 17px;
+        height: 17px;
+      }
+
+      .nav-item span {
+        overflow: hidden;
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sidebar-status {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        min-height: 44px;
+        border: 1px solid #bfe6d6;
+        border-radius: 8px;
+        background: var(--green-soft);
+        padding: 8px 10px;
+        color: var(--green);
+      }
+
+      .sidebar-status i,
+      .live-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 3px rgba(21, 159, 107, 0.12);
+      }
+
+      .sidebar-status span {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .sidebar-status strong {
+        color: var(--text);
+        font-size: 11px;
+      }
+
+      .sidebar-status small {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .workspace {
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+        flex-direction: column;
+      }
+
+      .topbar {
+        display: flex;
+        min-height: 76px;
+        flex: 0 0 76px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        border-bottom: 1px solid var(--border);
+        background: var(--nav);
+        padding: 0 24px;
+      }
+
+      .page-title {
+        min-width: 0;
+      }
+
+      .page-title h1 {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1.2;
+        font-weight: 730;
+        letter-spacing: 0;
+      }
+
+      .page-title p {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .top-actions,
+      .toolbar-actions,
+      .row-actions,
+      .segmented,
+      .status-inline {
+        display: flex;
+        align-items: center;
+      }
+
+      .top-actions {
+        gap: 8px;
+      }
+
+      .button,
+      .icon-button {
+        display: inline-flex;
+        height: 38px;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--text);
+        cursor: default;
+      }
+
+      .button {
+        padding: 0 13px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .icon-button {
+        width: 38px;
+        padding: 0;
+      }
+
+      .button.primary,
+      .icon-button.primary {
+        border-color: var(--blue);
+        background: var(--blue);
+        color: #fff;
+        box-shadow: 0 7px 16px rgba(37, 99, 235, 0.2);
+      }
+
+      .button.danger,
+      .icon-button.danger {
+        border-color: #f0c6c6;
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .button svg,
+      .icon-button svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      .content {
+        min-width: 0;
+        min-height: 0;
+        flex: 1;
+        overflow: hidden;
+        padding: 20px 24px 26px;
+      }
+
+      .page-view {
+        display: none;
+        height: 100%;
+        align-content: start;
+        gap: 16px;
+      }
+
+      .page-view.active {
+        display: grid;
+      }
+
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 30px;
+      }
+
+      .section-head h2,
+      .section-head p {
+        margin: 0;
+      }
+
+      .section-head h2 {
+        font-size: 16px;
+        font-weight: 720;
+      }
+
+      .section-head p {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .metric-card {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 11px;
+        min-height: 86px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 14px;
+        box-shadow: 0 7px 20px rgba(31, 42, 61, 0.055);
+      }
+
+      .metric-icon {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 8px;
+        background: var(--surface-blue);
+        color: var(--blue-dark);
+      }
+
+      .metric-icon.green {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .metric-icon.amber {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .metric-icon svg {
+        width: 19px;
+        height: 19px;
+      }
+
+      .metric-copy {
+        display: grid;
+        min-width: 0;
+        gap: 4px;
+      }
+
+      .metric-copy span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .metric-copy strong {
+        overflow: hidden;
+        font-size: 17px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-chip,
+      .tag {
+        display: inline-flex;
+        min-height: 24px;
+        align-items: center;
+        border-radius: 999px;
+        padding: 0 9px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .status-chip.ok,
+      .tag.ok {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .status-chip.info,
+      .tag.info {
+        background: var(--surface-blue);
+        color: var(--blue-dark);
+      }
+
+      .status-chip.warn,
+      .tag.warn {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .section-surface {
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .surface-head {
+        display: flex;
+        min-height: 54px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid var(--border);
+        padding: 0 16px;
+      }
+
+      .surface-head h3,
+      .surface-head p {
+        margin: 0;
+      }
+
+      .surface-head h3 {
+        font-size: 14px;
+      }
+
+      .surface-head p {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .overview-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.85fr);
+        gap: 14px;
+      }
+
+      .health-list,
+      .launch-list {
+        display: grid;
+      }
+
+      .health-row,
+      .launch-row {
+        display: grid;
+        min-height: 58px;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid var(--border);
+        padding: 10px 16px;
+      }
+
+      .health-row:last-child,
+      .launch-row:last-child {
+        border-bottom: 0;
+      }
+
+      .health-row {
+        grid-template-columns: 26px minmax(0, 1fr) auto auto;
+      }
+
+      .health-row > svg {
+        width: 17px;
+        height: 17px;
+        color: var(--green);
+      }
+
+      .health-copy {
+        min-width: 0;
+      }
+
+      .health-copy strong,
+      .health-copy span {
+        display: block;
+      }
+
+      .health-copy strong {
+        font-size: 13px;
+      }
+
+      .health-copy span {
+        margin-top: 3px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .health-action {
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: var(--surface-soft);
+        color: var(--muted);
+      }
+
+      .health-action svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .launch-row {
+        grid-template-columns: 92px minmax(0, 1fr);
+      }
+
+      .launch-row span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .launch-row strong,
+      .launch-row code {
+        overflow: hidden;
+        color: var(--text);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .launch-row code {
+        font-family: "Cascadia Code", Consolas, monospace;
+      }
+
+      .quick-bar {
+        display: flex;
+        min-height: 54px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 8px 12px 8px 16px;
+      }
+
+      .quick-copy {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+      }
+
+      .quick-copy svg {
+        width: 17px;
+        height: 17px;
+        color: var(--blue);
+      }
+
+      .quick-copy span {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) auto minmax(130px, 0.45fr) minmax(150px, 0.55fr) auto auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 72px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 11px 12px;
+        box-shadow: var(--shadow);
+      }
+
+      .search {
+        position: relative;
+        min-width: 0;
+      }
+
+      .search svg {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        width: 17px;
+        height: 17px;
+        transform: translateY(-50%);
+        color: var(--subtle);
+      }
+
+      .search input,
+      .select-like {
+        width: 100%;
+        height: 42px;
+        border: 1px solid var(--border-strong);
+        border-radius: 7px;
+        background: var(--surface-soft);
+        color: var(--text);
+      }
+
+      .search input {
+        padding: 0 12px 0 39px;
+        outline: 0;
+        font-size: 13px;
+      }
+
+      .search input::placeholder {
+        color: var(--subtle);
+      }
+
+      .segmented {
+        height: 42px;
+        gap: 3px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--surface-soft);
+        padding: 3px;
+      }
+
+      .segmented button {
+        height: 34px;
+        min-width: 36px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--muted);
+        padding: 0 10px;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .segmented button.active {
+        background: var(--blue);
+        color: #fff;
+      }
+
+      .segmented svg {
+        width: 17px;
+        height: 17px;
+      }
+
+      .select-like {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 0 11px;
+        font-size: 12px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .select-like svg {
+        width: 15px;
+        height: 15px;
+        color: var(--muted);
+      }
+
+      .master-switch {
+        display: flex;
+        height: 42px;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid #bfe6d6;
+        border-radius: 7px;
+        background: var(--green-soft);
+        padding: 0 10px;
+        white-space: nowrap;
+      }
+
+      .switch-track {
+        position: relative;
+        width: 32px;
+        height: 18px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--green);
+      }
+
+      .switch-track::after {
+        content: "";
+        position: absolute;
+        right: 3px;
+        top: 3px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #fff;
+      }
+
+      .master-switch span {
+        display: grid;
+        gap: 1px;
+      }
+
+      .master-switch strong {
+        font-size: 11px;
+      }
+
+      .master-switch small {
+        color: var(--green);
+        font-size: 9px;
+      }
+
+      .toolbar-actions,
+      .row-actions {
+        gap: 6px;
+      }
+
+      .provider-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .entity-card {
+        display: flex;
+        min-width: 0;
+        height: 326px;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: 0 8px 22px rgba(31, 42, 61, 0.06);
+      }
+
+      .entity-card.current {
+        border: 2px solid var(--blue);
+        box-shadow: 0 12px 28px rgba(37, 99, 235, 0.12);
+      }
+
+      .entity-body {
+        flex: 1;
+        padding: 16px;
+      }
+
+      .entity-head {
+        display: grid;
+        grid-template-columns: 24px 38px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .drag {
+        display: grid;
+        place-items: center;
+        color: var(--subtle);
+      }
+
+      .drag svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .entity-mark {
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        border-radius: 7px;
+        background: var(--surface-blue);
+        color: var(--blue-dark);
+        font-weight: 760;
+      }
+
+      .entity-mark.amber {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .entity-mark.green {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .entity-title {
+        min-width: 0;
+      }
+
+      .entity-title strong,
+      .entity-title small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .entity-title strong {
+        font-size: 14px;
+      }
+
+      .entity-title small {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .entity-tags {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .entity-details {
+        display: grid;
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .entity-detail {
+        display: grid;
+        grid-template-columns: 17px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .entity-detail svg {
+        width: 15px;
+        height: 15px;
+        color: var(--subtle);
+      }
+
+      .entity-detail span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .entity-detail strong,
+      .entity-detail code {
+        max-width: 205px;
+        overflow: hidden;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .entity-detail code {
+        color: var(--blue-dark);
+        font-family: "Cascadia Code", Consolas, monospace;
+      }
+
+      .entity-health {
+        margin-top: 16px;
+        border-top: 1px solid var(--border);
+        padding-top: 13px;
+      }
+
+      .entity-health-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 7px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .entity-health-head strong {
+        color: var(--green);
+        font-size: 12px;
+      }
+
+      .entity-health-head strong.warn {
+        color: var(--amber);
+      }
+
+      .meter {
+        height: 6px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--surface-soft);
+      }
+
+      .meter span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--green);
+      }
+
+      .meter span.warn {
+        background: var(--amber);
+      }
+
+      .entity-footer {
+        display: flex;
+        min-height: 52px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-top: 1px solid var(--border);
+        background: var(--surface-soft);
+        padding: 8px 11px 8px 15px;
+      }
+
+      .entity-footer small {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--subtle);
+        font-size: 10px;
+      }
+
+      .entity-footer small svg {
+        width: 13px;
+        height: 13px;
+      }
+
+      .row-actions .icon-button,
+      .entity-footer .icon-button {
+        width: 30px;
+        height: 30px;
+        border-color: transparent;
+        background: var(--surface);
+      }
+
+      .row-actions .icon-button svg,
+      .entity-footer .icon-button svg {
+        width: 14px;
+        height: 14px;
+      }
+
+      .sessions-toolbar {
+        grid-template-columns: minmax(280px, 1fr) minmax(135px, 0.45fr) minmax(155px, 0.5fr) auto;
+      }
+
+      .progress-strip {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 46px;
+        border: 1px solid #c9d8fb;
+        border-radius: 8px;
+        background: var(--surface-blue);
+        padding: 8px 12px;
+      }
+
+      .progress-strip strong,
+      .progress-strip span {
+        font-size: 11px;
+      }
+
+      .progress-strip span {
+        color: var(--muted);
+      }
+
+      .progress-strip .meter {
+        height: 7px;
+        background: rgba(37, 99, 235, 0.12);
+      }
+
+      .progress-strip .meter span {
+        background: var(--blue);
+      }
+
+      .table-wrap {
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: middle;
+      }
+
+      th {
+        background: var(--surface-soft);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      td {
+        height: 56px;
+        font-size: 11px;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      th.check,
+      td.check {
+        width: 42px;
+        text-align: center;
+      }
+
+      th.title-col {
+        width: 34%;
+      }
+
+      th.project-col {
+        width: 18%;
+      }
+
+      th.provider-col {
+        width: 15%;
+      }
+
+      th.time-col {
+        width: 16%;
+      }
+
+      th.actions-col {
+        width: 92px;
+        text-align: right;
+      }
+
+      .fake-check {
+        display: inline-grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border: 1px solid var(--border-strong);
+        border-radius: 4px;
+        background: var(--surface);
+      }
+
+      .session-title {
+        min-width: 0;
+      }
+
+      .session-title strong,
+      .session-title code {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-title strong {
+        font-size: 12px;
+      }
+
+      .session-title code {
+        margin-top: 3px;
+        color: var(--subtle);
+        font-family: "Cascadia Code", Consolas, monospace;
+        font-size: 9px;
+      }
+
+      td.muted {
+        overflow: hidden;
+        color: var(--muted);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      td.actions-cell {
+        text-align: right;
+      }
+
+      .settings-tabs {
+        display: flex;
+        min-height: 52px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 7px 9px;
+        box-shadow: var(--shadow);
+      }
+
+      .settings-tabs .segmented {
+        border: 0;
+        background: transparent;
+      }
+
+      .settings-tabs .segmented button {
+        min-width: 96px;
+      }
+
+      .settings-tabs .segmented button.active {
+        background: var(--surface-blue);
+        color: var(--blue-dark);
+      }
+
+      .save-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .settings-layout {
+        display: grid;
+        grid-template-columns: 188px minmax(0, 1fr);
+        gap: 14px;
+        min-height: 0;
+      }
+
+      .settings-nav {
+        align-self: start;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 8px;
+      }
+
+      .settings-nav button {
+        display: flex;
+        width: 100%;
+        min-height: 38px;
+        align-items: center;
+        gap: 8px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        padding: 0 10px;
+        text-align: left;
+        font-size: 12px;
+      }
+
+      .settings-nav button.active {
+        background: var(--surface-blue);
+        color: var(--blue-dark);
+        font-weight: 700;
+      }
+
+      .settings-nav svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .settings-surface {
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .settings-group-head {
+        display: flex;
+        min-height: 58px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid var(--border);
+        padding: 0 18px;
+      }
+
+      .settings-group-head h3,
+      .settings-group-head p {
+        margin: 0;
+      }
+
+      .settings-group-head h3 {
+        font-size: 14px;
+      }
+
+      .settings-group-head p {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .setting-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(230px, 0.42fr);
+        min-height: 74px;
+        align-items: center;
+        gap: 24px;
+        border-bottom: 1px solid var(--border);
+        padding: 12px 18px;
+      }
+
+      .setting-row:last-child {
+        border-bottom: 0;
+      }
+
+      .setting-copy {
+        min-width: 0;
+      }
+
+      .setting-copy strong,
+      .setting-copy span {
+        display: block;
+      }
+
+      .setting-copy strong {
+        font-size: 13px;
+      }
+
+      .setting-copy span {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .setting-control {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .setting-control .select-like {
+        max-width: 250px;
+      }
+
+      .text-input {
+        width: 250px;
+        height: 38px;
+        border: 1px solid var(--border-strong);
+        border-radius: 7px;
+        background: var(--surface-soft);
+        color: var(--text);
+        padding: 0 10px;
+        font-size: 11px;
+      }
+
+      .switch-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--green);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .save-bar {
+        display: flex;
+        min-height: 54px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 7px 9px 7px 16px;
+      }
+
+      .save-bar span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      @media (max-width: 1220px) {
+        .app-shell {
+          grid-template-columns: 190px minmax(0, 1fr);
+        }
+
+        .toolbar {
+          grid-template-columns: minmax(240px, 1fr) auto minmax(125px, 0.45fr) minmax(145px, 0.5fr);
+        }
+
+        .master-switch {
+          grid-column: 1 / 3;
+          width: fit-content;
+        }
+
+        .toolbar-actions {
+          grid-column: 3 / 5;
+          justify-self: end;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell" id="appShell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark"><img src="../images/codex-deck-logo.svg" alt="Codex Deck 标识" /></div>
+          <div class="brand-copy"><strong>Codex Deck</strong><span>Codex 管理控制台</span></div>
+        </div>
+
+        <div class="nav-scroll">
+          <div class="nav-group">
+            <span class="nav-group-label">工作台</span>
+            <button class="nav-item" data-view="overview" type="button"><i data-lucide="layout-dashboard"></i><span>概览</span></button>
+            <button class="nav-item" data-view="providers" type="button"><i data-lucide="key-round"></i><span>供应商配置</span></button>
+            <button class="nav-item" data-view="sessions" type="button"><i data-lucide="message-circle"></i><span>会话管理</span></button>
+            <button class="nav-item" type="button"><i data-lucide="network"></i><span>工具与插件</span></button>
+          </div>
+
+          <div class="nav-group">
+            <span class="nav-group-label">扩展</span>
+            <button class="nav-item" type="button"><i data-lucide="hammer"></i><span>Codex 增强</span></button>
+            <button class="nav-item" type="button"><i data-lucide="external-link"></i><span>Zed 远程项目</span></button>
+            <button class="nav-item" type="button"><i data-lucide="file-code-2"></i><span>脚本市场</span></button>
+          </div>
+
+          <div class="nav-group">
+            <span class="nav-group-label">系统</span>
+            <button class="nav-item" type="button"><i data-lucide="wrench"></i><span>安装维护</span></button>
+            <button class="nav-item" type="button"><i data-lucide="info"></i><span>关于</span></button>
+            <button class="nav-item" data-view="settings" type="button"><i data-lucide="settings"></i><span>设置</span></button>
+          </div>
+        </div>
+
+        <div class="sidebar-status">
+          <i></i>
+          <span><strong>Codex Deck 已就绪</strong><small>26.707.9981.0</small></span>
+        </div>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="page-title"><h1 id="pageTitle">概览</h1><p id="pageSubtitle">关键状态、问题与快捷操作</p></div>
+          <div class="top-actions">
+            <button class="icon-button" title="切换语言" type="button"><i data-lucide="languages"></i></button>
+            <button class="icon-button" id="themeButton" title="切换主题" type="button"><i data-lucide="moon"></i></button>
+            <button class="button" type="button"><i data-lucide="rocket"></i><span>重启 Codex Deck</span></button>
+            <button class="icon-button" title="刷新当前页面" type="button"><i data-lucide="refresh-cw"></i></button>
+          </div>
+        </header>
+
+        <main class="content">
+          <section class="page-view" data-page="overview">
+            <div class="section-head"><div><h2>系统状态</h2><p>优先展示影响 Codex 使用的问题</p></div><span class="status-inline"><i class="live-dot"></i><span class="status-chip ok">全部正常</span></span></div>
+
+            <div class="metric-grid">
+              <article class="metric-card"><span class="metric-icon"><i data-lucide="box"></i></span><span class="metric-copy"><span>Codex 版本</span><strong>26.707.9981.0</strong></span><span class="status-chip ok">正常</span></article>
+              <article class="metric-card"><span class="metric-icon green"><i data-lucide="app-window"></i></span><span class="metric-copy"><span>Codex 应用</span><strong>已找到</strong></span><span class="status-chip ok">就绪</span></article>
+              <article class="metric-card"><span class="metric-icon"><i data-lucide="panel-top-open"></i></span><span class="metric-copy"><span>快捷入口</span><strong>2 / 2</strong></span><span class="status-chip ok">已安装</span></article>
+              <article class="metric-card"><span class="metric-icon amber"><i data-lucide="radio-tower"></i></span><span class="metric-copy"><span>Watcher</span><strong>自动接管</strong></span><span class="status-chip info">运行中</span></article>
+            </div>
+
+            <div class="overview-grid">
+              <section class="section-surface">
+                <header class="surface-head"><div><h3>健康检查</h3><p>路径可复制，问题可在原位置修复</p></div><button class="button"><i data-lucide="stethoscope"></i>重新检查</button></header>
+                <div class="health-list">
+                  <div class="health-row"><i data-lucide="circle-check"></i><span class="health-copy"><strong>Codex 应用</strong><span>C:\Program Files\WindowsApps\OpenAI.Codex_26.707.9981.0\app</span></span><span class="status-chip ok">正常</span><button class="health-action" title="复制路径"><i data-lucide="copy"></i></button></div>
+                  <div class="health-row"><i data-lucide="circle-check"></i><span class="health-copy"><strong>静默启动入口</strong><span>C:\Users\Disco\Desktop\Codex.lnk</span></span><span class="status-chip ok">已安装</span><button class="health-action" title="复制路径"><i data-lucide="copy"></i></button></div>
+                  <div class="health-row"><i data-lucide="circle-check"></i><span class="health-copy"><strong>管理工具入口</strong><span>C:\Users\Disco\Desktop\Codex Deck.lnk</span></span><span class="status-chip ok">已安装</span><button class="health-action" title="复制路径"><i data-lucide="copy"></i></button></div>
+                  <div class="health-row"><i data-lucide="circle-check"></i><span class="health-copy"><strong>插件市场缓存</strong><span>内置缓存已注册，110 个技能可用</span></span><span class="status-chip ok">已注册</span><button class="health-action" title="查看详情"><i data-lucide="chevron-right"></i></button></div>
+                </div>
+              </section>
+
+              <section class="section-surface">
+                <header class="surface-head"><div><h3>最近启动</h3><p>Codex Deck launcher ready</p></div><span class="status-chip ok">running</span></header>
+                <div class="launch-list">
+                  <div class="launch-row"><span>启动时间</span><strong>2026/7/15 15:42:12</strong></div>
+                  <div class="launch-row"><span>Debug 端口</span><code>56926</code></div>
+                  <div class="launch-row"><span>Helper 端口</span><code>57321</code></div>
+                  <div class="launch-row"><span>状态日志</span><code>codex-plus.log</code></div>
+                </div>
+              </section>
+            </div>
+
+            <div class="quick-bar">
+              <span class="quick-copy"><i data-lucide="shield-check"></i><span>启动 Codex 时不会自动改写供应商配置；当前环境可以安全启动。</span></span>
+              <div class="toolbar-actions"><button class="button"><i data-lucide="wrench"></i>修复入口</button><button class="button primary"><i data-lucide="rocket"></i>启动 Codex</button></div>
+            </div>
+          </section>
+
+          <section class="page-view" data-page="providers">
+            <div class="toolbar">
+              <label class="search"><i data-lucide="search"></i><input placeholder="搜索供应商名称或 Base URL..." /></label>
+              <div class="segmented"><button title="列表视图"><i data-lucide="list"></i></button><button class="active" title="卡片视图"><i data-lucide="layout-grid"></i></button></div>
+              <button class="select-like"><span>全部 (3)</span><i data-lucide="chevron-down"></i></button>
+              <button class="select-like"><span>手动顺序</span><i data-lucide="chevron-down"></i></button>
+              <div class="master-switch"><span class="switch-track"></span><span><strong>供应商切换</strong><small>已启用</small></span></div>
+              <div class="toolbar-actions"><button class="icon-button primary" title="添加供应商"><i data-lucide="plus"></i></button><button class="icon-button" title="从第三方导入"><i data-lucide="download"></i></button><button class="icon-button" title="刷新全部延迟"><i data-lucide="refresh-cw"></i></button></div>
+            </div>
+
+            <div class="section-head"><div><h2>供应商</h2><p>3 个配置，搜索和筛选不会改变手动顺序</p></div><span class="status-inline"><i class="live-dot"></i><span class="status-chip ok">当前配置可切换</span></span></div>
+
+            <div class="provider-grid">
+              <article class="entity-card current">
+                <div class="entity-body">
+                  <header class="entity-head"><span class="drag"><i data-lucide="grip-vertical"></i></span><span class="entity-mark">默</span><span class="entity-title"><strong>默认中转</strong><small>Responses API</small></span><span class="entity-tags"><span class="tag ok">当前</span><span class="tag info">纯 API</span></span></header>
+                  <div class="entity-details"><div class="entity-detail"><i data-lucide="waypoints"></i><span>协议</span><strong>Responses API</strong></div><div class="entity-detail"><i data-lucide="link-2"></i><span>Base URL</span><code>https://gptpro.live/v1</code></div><div class="entity-detail"><i data-lucide="boxes"></i><span>模型配置</span><strong>8 个模型</strong></div></div>
+                  <div class="entity-health"><div class="entity-health-head"><span>连接延迟</span><strong class="warn">657 ms</strong></div><div class="meter"><span class="warn" style="width:62%"></span></div></div>
+                </div>
+                <footer class="entity-footer"><small><i data-lucide="clock-3"></i>刚刚检测</small><span class="row-actions"><button class="icon-button" title="当前正在使用"><i data-lucide="circle-check"></i></button><button class="icon-button" title="测试"><i data-lucide="flask-conical"></i></button><button class="icon-button" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></footer>
+              </article>
+
+              <article class="entity-card">
+                <div class="entity-body">
+                  <header class="entity-head"><span class="drag"><i data-lucide="grip-vertical"></i></span><span class="entity-mark amber">备</span><span class="entity-title"><strong>备用通道</strong><small>Chat Completions</small></span><span class="entity-tags"><span class="tag info">纯 API</span></span></header>
+                  <div class="entity-details"><div class="entity-detail"><i data-lucide="waypoints"></i><span>协议</span><strong>Chat Completions</strong></div><div class="entity-detail"><i data-lucide="link-2"></i><span>Base URL</span><code>https://api.example.com/v1</code></div><div class="entity-detail"><i data-lucide="boxes"></i><span>模型配置</span><strong>6 个模型</strong></div></div>
+                  <div class="entity-health"><div class="entity-health-head"><span>连接延迟</span><strong>238 ms</strong></div><div class="meter"><span style="width:88%"></span></div></div>
+                </div>
+                <footer class="entity-footer"><small><i data-lucide="clock-3"></i>2 分钟前</small><span class="row-actions"><button class="icon-button" title="设为当前"><i data-lucide="play"></i></button><button class="icon-button" title="测试"><i data-lucide="flask-conical"></i></button><button class="icon-button" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></footer>
+              </article>
+
+              <article class="entity-card">
+                <div class="entity-body">
+                  <header class="entity-head"><span class="drag"><i data-lucide="grip-vertical"></i></span><span class="entity-mark green">聚</span><span class="entity-title"><strong>团队聚合</strong><small>成员轮转</small></span><span class="entity-tags"><span class="tag ok">聚合</span></span></header>
+                  <div class="entity-details"><div class="entity-detail"><i data-lucide="workflow"></i><span>轮转策略</span><strong>按优先级轮转</strong></div><div class="entity-detail"><i data-lucide="network"></i><span>成员供应商</span><strong>3 个成员</strong></div><div class="entity-detail"><i data-lucide="shield-check"></i><span>可用成员</span><strong>3 / 3</strong></div></div>
+                  <div class="entity-health"><div class="entity-health-head"><span>成员健康度</span><strong>100%</strong></div><div class="meter"><span style="width:100%"></span></div></div>
+                </div>
+                <footer class="entity-footer"><small><i data-lucide="clock-3"></i>1 分钟前</small><span class="row-actions"><button class="icon-button" title="设为当前"><i data-lucide="play"></i></button><button class="icon-button" title="查看成员"><i data-lucide="users"></i></button><button class="icon-button" title="编辑"><i data-lucide="pencil"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></footer>
+              </article>
+            </div>
+          </section>
+
+          <section class="page-view" data-page="sessions">
+            <div class="metric-grid">
+              <article class="metric-card"><span class="metric-icon"><i data-lucide="messages-square"></i></span><span class="metric-copy"><span>会话总数</span><strong>59</strong></span><span class="status-chip info">本地</span></article>
+              <article class="metric-card"><span class="metric-icon green"><i data-lucide="inbox"></i></span><span class="metric-copy"><span>未归档</span><strong>59</strong></span><span class="status-chip ok">可用</span></article>
+              <article class="metric-card"><span class="metric-icon"><i data-lucide="archive"></i></span><span class="metric-copy"><span>已归档</span><strong>0</strong></span><span class="status-chip info">全部</span></article>
+              <article class="metric-card"><span class="metric-icon amber"><i data-lucide="database"></i></span><span class="metric-copy"><span>同步目标</span><strong>custom</strong></span><span class="status-chip ok">已同步</span></article>
+            </div>
+
+            <div class="toolbar sessions-toolbar">
+              <label class="search"><i data-lucide="search"></i><input placeholder="搜索标题、项目或会话 ID..." /></label>
+              <button class="select-like"><span>全部状态</span><i data-lucide="chevron-down"></i></button>
+              <button class="select-like"><span>最近更新</span><i data-lucide="chevron-down"></i></button>
+              <div class="toolbar-actions"><button class="button"><i data-lucide="history"></i>修复历史会话</button><button class="button primary"><i data-lucide="refresh-cw"></i>刷新会话</button></div>
+            </div>
+
+            <div class="progress-strip"><strong>上次修复完成</strong><div><div class="meter"><span style="width:100%"></span></div><span>修复 52 个会话文件，更新 70 行数据库索引</span></div><span>100%</span></div>
+
+            <div class="section-head"><div><h2>本地会话</h2><p>按更新时间倒序，已选择 0 / 59</p></div><div class="toolbar-actions"><button class="button">全选当前列表</button><button class="button danger" disabled>删除所选</button></div></div>
+
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="check"><span class="fake-check"></span></th><th class="title-col">会话</th><th class="project-col">项目</th><th class="provider-col">Provider</th><th class="time-col">更新时间</th><th>状态</th><th class="actions-col">操作</th></tr></thead>
+                <tbody>
+                  <tr><td class="check"><span class="fake-check"></span></td><td><span class="session-title"><strong>修正算法优化建议仪表</strong><code>019f650b-5e1f-7c43-9939</code></span></td><td class="muted">codex++</td><td><span class="tag info">custom</span></td><td class="muted">刚刚</td><td><span class="tag ok">正常</span></td><td class="actions-cell"><span class="row-actions"><button class="icon-button" title="打开"><i data-lucide="arrow-up-right"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></td></tr>
+                  <tr><td class="check"><span class="fake-check"></span></td><td><span class="session-title"><strong>模型窗口与压缩阈值设计</strong><code>019f64ad-b225-7c42-a110</code></span></td><td class="muted">codex++</td><td><span class="tag info">custom</span></td><td class="muted">8 分钟前</td><td><span class="tag ok">正常</span></td><td class="actions-cell"><span class="row-actions"><button class="icon-button" title="打开"><i data-lucide="arrow-up-right"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></td></tr>
+                  <tr><td class="check"><span class="fake-check"></span></td><td><span class="session-title"><strong>供应商配置页面重构</strong><code>019f6409-9a72-7c45-bc31</code></span></td><td class="muted">codex++</td><td><span class="tag info">custom</span></td><td class="muted">31 分钟前</td><td><span class="tag warn">未归档</span></td><td class="actions-cell"><span class="row-actions"><button class="icon-button" title="打开"><i data-lucide="arrow-up-right"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></td></tr>
+                  <tr><td class="check"><span class="fake-check"></span></td><td><span class="session-title"><strong>插件市场缓存修复</strong><code>019f6387-ec21-7c46-8080</code></span></td><td class="muted">Codex App</td><td><span class="tag info">official</span></td><td class="muted">今天 14:20</td><td><span class="tag ok">正常</span></td><td class="actions-cell"><span class="row-actions"><button class="icon-button" title="打开"><i data-lucide="arrow-up-right"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></td></tr>
+                  <tr><td class="check"><span class="fake-check"></span></td><td><span class="session-title"><strong>Zed 远程项目调试</strong><code>019f62ce-33ae-7c49-91c5</code></span></td><td class="muted">remote-work</td><td><span class="tag info">custom</span></td><td class="muted">昨天</td><td><span class="tag ok">正常</span></td><td class="actions-cell"><span class="row-actions"><button class="icon-button" title="打开"><i data-lucide="arrow-up-right"></i></button><button class="icon-button danger" title="删除"><i data-lucide="trash-2"></i></button></span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="page-view" data-page="settings">
+            <div class="settings-tabs">
+              <div class="segmented"><button class="active">常规</button><button>模型与图片</button><button>Stepwise</button><button>启动参数</button></div>
+              <span class="save-state"><i class="live-dot"></i>设置已同步</span>
+            </div>
+
+            <div class="settings-layout">
+              <nav class="settings-nav"><button class="active"><i data-lucide="sliders-horizontal"></i>界面与语言</button><button><i data-lucide="bot"></i>测试模型</button><button><i data-lucide="folder-cog"></i>文件与目录</button><button><i data-lucide="shield"></i>安全与行为</button></nav>
+
+              <section class="settings-surface">
+                <header class="settings-group-head"><div><h3>界面与语言</h3><p>这些选项立即生效，不需要重启 Codex Deck。</p></div><span class="status-chip ok">已应用</span></header>
+                <div class="setting-row"><span class="setting-copy"><strong>显示语言</strong><span>选择管理控制台使用的语言。</span></span><span class="setting-control"><button class="select-like"><span>简体中文</span><i data-lucide="chevron-down"></i></button></span></div>
+                <div class="setting-row"><span class="setting-copy"><strong>应用主题</strong><span>切换亮色或暗色模式，顶部工具栏也可快速切换。</span></span><span class="setting-control"><button class="select-like"><span>浅色</span><i data-lucide="chevron-down"></i></button></span></div>
+                <div class="setting-row"><span class="setting-copy"><strong>测试请求模型</strong><span>供应商“发送测试请求”默认使用的模型。</span></span><span class="setting-control"><input class="text-input" value="gpt-5.4-mini" readonly /></span></div>
+                <div class="setting-row"><span class="setting-copy"><strong>启动后自动刷新当前页面</strong><span>完成后端初始化后更新页面状态；不会修改供应商配置文件。</span></span><span class="setting-control"><span class="switch-control"><span class="switch-track"></span>已启用</span></span></div>
+                <div class="setting-row"><span class="setting-copy"><strong>设置文件</strong><span>C:\Users\Disco\AppData\Roaming\CodexPlusPlus\settings.json</span></span><span class="setting-control"><button class="button"><i data-lucide="folder-open"></i>打开位置</button></span></div>
+              </section>
+            </div>
+
+            <div class="save-bar"><span>没有未保存的更改</span><div class="toolbar-actions"><button class="button">恢复默认</button><button class="button primary"><i data-lucide="save"></i>保存设置</button></div></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script>
+      const pages = {
+        overview: ["概览", "关键状态、问题与快捷操作"],
+        providers: ["供应商配置", "管理 Codex API 供应商、协议、Key 与配置文件"],
+        sessions: ["会话管理", "查看、修复和管理 Codex 本地会话"],
+        settings: ["设置", "管理界面、模型、连接和启动行为"],
+      };
+
+      function activatePage(name) {
+        const page = pages[name] ? name : "overview";
+        document.querySelectorAll("[data-page]").forEach((element) => element.classList.toggle("active", element.dataset.page === page));
+        document.querySelectorAll(".nav-item[data-view]").forEach((element) => element.classList.toggle("active", element.dataset.view === page));
+        document.getElementById("pageTitle").textContent = pages[page][0];
+        document.getElementById("pageSubtitle").textContent = pages[page][1];
+        document.body.dataset.page = page;
+      }
+
+      document.querySelectorAll(".nav-item[data-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          location.hash = button.dataset.view;
+        });
+      });
+
+      document.getElementById("themeButton").addEventListener("click", () => document.getElementById("appShell").classList.toggle("dark"));
+      window.addEventListener("hashchange", () => activatePage(location.hash.slice(1)));
+      window.addEventListener("load", () => {
+        activatePage(location.hash.slice(1));
+        window.lucide?.createIcons();
+      });
+    </script>
+  </body>
+</html>

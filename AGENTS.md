@@ -54,7 +54,7 @@
 ## 与上游同步
 
 - `upstream` = https://github.com/BigPizzaV3/CodexPlusPlus.git
-- `origin` = 用户自己的 GitHub fork（待创建）
+- `origin` = https://github.com/nanzheyin/-codexplus.git
 - feature 分支命名：`codex/per-model-context` 或类似
 - 定期 `git fetch upstream && git rebase upstream/main` 保持同步
 - 目标：全栈完成后向主仓提 PR 合并

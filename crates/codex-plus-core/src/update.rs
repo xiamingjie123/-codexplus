@@ -4,9 +4,9 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const DEFAULT_REPOSITORY: &str = "xiamingjie123/-codexplus";
+pub const DEFAULT_REPOSITORY: &str = "nanzheyin/-codexplus";
 pub const DEFAULT_LATEST_JSON_URL: &str =
-    "https://github.com/xiamingjie123/-codexplus/releases/latest/download/latest.json";
+    "https://github.com/nanzheyin/-codexplus/releases/latest/download/latest.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseAsset {

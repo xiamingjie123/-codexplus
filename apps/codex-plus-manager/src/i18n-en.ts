@@ -1,4 +1,4 @@
-// English translations for the Codex++ manager UI, keyed by the original
+// English translations for the Codex Deck manager UI, keyed by the original
 // Chinese source text. Generated keys live in tools/i18n-keys.json; run
 // `node tools/i18n-verify.mjs` to confirm this dictionary covers exactly that
 // set (no missing or stale entries). See src/i18n.ts for how these are used.
@@ -16,12 +16,14 @@ export const EN_PLAIN: Record<string, string> = {
   "Codex 意外停止": "Codex stopped unexpectedly",
   "Codex 版本": "Codex version",
   "Codex 目标": "Codex goals",
-  "Codex++ 导入": "Codex++ import",
-  "Codex++ 版本": "Codex++ version",
-  "Codex增强": "Codex enhancements",
-  "Codex增强模式": "Codex enhancement mode",
+  "Codex Deck 导入": "Codex Deck import",
+  "Codex Deck 版本": "Codex Deck version",
+  "Codex Deck 已就绪": "Codex Deck ready",
+  "Codex 增强": "Codex enhancements",
+  "Codex 增强模式": "Codex enhancement mode",
+  "Codex 管理控制台": "Codex management console",
   "Debug 端口": "Debug port",
-  "Fast 按钮": "Fast button",
+  "系统 Fast 开关": "System Fast toggle",
   "GitHub Release 更新": "GitHub Release update",
   "GitHub Release 检查": "GitHub Release check",
   "Helper 端口": "Helper port",
@@ -49,7 +51,7 @@ export const EN_PLAIN: Record<string, string> = {
   "TOML 配置体": "TOML config body",
   "Watcher 操作": "Watcher action",
   "Watcher 状态": "Watcher status",
-  "Watcher 用于保持 Codex++ 接管状态": "The watcher keeps Codex++ in control",
+  "Watcher 用于保持 Codex Deck 接管状态": "The watcher keeps Codex Deck in control",
   "Watcher 自动接管": "Watcher auto-takeover",
   "仅支持 V2 桌宠；不会修改宠物文件。将 V2 的 Computer Use 光标朝向动作映射到真实鼠标，V1 开启后安全不生效；拖拽、原生悬停或 Computer Use 活跃时自动让步。":
     "V2 pets only; pet files are never modified. Maps the V2 Computer Use cursor-look animation to the real mouse cursor. V1 pets safely remain unchanged, while dragging, native hover, and active Computer Use take priority.",
@@ -118,7 +120,7 @@ export const EN_PLAIN: Record<string, string> = {
   "供应商预设列表": "Provider preset list",
   "保存": "Save",
   "保存为默认路径": "Save as default path",
-  "保存到 Codex++ state，不改写 Zed settings。": "Saved to Codex++ state, does not modify Zed settings.",
+  "保存到 Codex Deck state，不改写 Zed settings。": "Saved to Codex Deck state; Zed settings are not modified.",
   "保存增强设置": "Save enhancement settings",
   "保存扩展项": "Save entry",
   "保存的应用路径": "Saved app path",
@@ -139,7 +141,7 @@ export const EN_PLAIN: Record<string, string> = {
   "入口管理": "Entrypoint management",
   "全选当前列表": "Select all in current list",
   "关于": "About",
-  "关于 Codex++": "About Codex++",
+  "关于 Codex Deck": "About Codex Deck",
   "关闭": "Off",
   "关闭后会停用删除、导出、项目移动、插件相关和菜单位置增强。":
     "When off, disables deletion, export, project move, plugin-related and menu placement enhancements.",
@@ -183,7 +185,7 @@ export const EN_PLAIN: Record<string, string> = {
   "包含版本、路径、设置和平台信息": "Includes version, paths, settings and platform info",
   "协议": "Protocol",
   "卸载入口": "Uninstall entrypoints",
-  "卸载时移除 Codex++ 托管数据": "Remove Codex++ managed data on uninstall",
+  "卸载时移除 Codex Deck 托管数据": "Remove Codex Deck managed data on uninstall",
   "历史会话修复": "Historical session repair",
   "历史会话修复失败，请查看错误提示后重试。": "Historical session repair failed. Check the error message and retry.",
   "历史会话修复进度": "Historical session repair progress",
@@ -207,21 +209,21 @@ export const EN_PLAIN: Record<string, string> = {
   "名称": "Name",
   "启动 Codex App 时追加到默认 CDP 参数后。留空则保持默认启动行为。":
     "Appended after the default CDP arguments when launching the Codex app. Leave empty to keep default launch behavior.",
-  "启动 Codex++": "Launch Codex++",
+  "启动 Codex": "Launch Codex",
   "启动任务": "Launch task",
   "启动前自动修复历史会话": "Auto-repair historical sessions before launch",
   "启动时通过本地主进程调试端口汉化 Codex 原生菜单；不修改安装包。需重启 Codex 才生效。":
     "Localizes the Codex native menu via the local main-process debug port at launch; doesn't modify the install package. Requires restarting Codex.",
   "启用": "Enable",
   "启用 Codex 图片覆盖层": "Enable Codex image overlay",
-  "启用 Codex增强": "Enable Codex enhancements",
+  "启用 Codex 增强": "Enable Codex enhancements",
   "强制启用 Windows Computer Use Guard": "Force-enable Windows Computer Use Guard",
   "启用供应商配置切换": "Enable provider configuration switching",
   "启用此扩展项": "Enable this entry",
   "启用目标功能": "Enable goals feature",
   "启用目标续跑保护": "Enable goal resume guard",
-  "检测到目标上下文时，Codex++ 会在中转请求中追加续跑保护提示，减少压缩后重做旧任务。":
-    "When goal context is detected, Codex++ appends a resume guard prompt to relay requests to reduce redoing old tasks after compaction.",
+  "检测到目标上下文时，Codex Deck 会在中转请求中追加续跑保护提示，减少压缩后重做旧任务。":
+    "When goal context is detected, Codex Deck appends a resume guard prompt to relay requests to reduce redoing old tasks after compaction.",
   "图片": "Image",
   "图片覆盖层": "Image overlay",
   "在会话列表悬停显示删除按钮，并支持撤销。": "Show a delete button on hover in the session list, with undo support.",
@@ -257,7 +259,7 @@ export const EN_PLAIN: Record<string, string> = {
   "官方登录": "Official login",
   "官方登录模式": "Official login mode",
   "对话居中宽度": "Centered conversation width",
-  "导入 Codex++ 供应商": "Import Codex++ provider",
+  "导入 Codex Deck 供应商": "Import Codex Deck provider",
   "尚未刷新": "Not refreshed yet",
   "尚未检查 Codex 应用路径。": "Codex app path not checked yet.",
   "尚未检查 GitHub Release；更新会下载并启动安装包。": "GitHub Release not checked yet; updating downloads and launches the installer.",
@@ -272,8 +274,8 @@ export const EN_PLAIN: Record<string, string> = {
   "正在刷新官方远端插件缓存状态…": "Refreshing official remote plugin cache status…",
   "正在处理…": "Processing…",
   "工具与插件": "Tools & plugins",
-  "已切回官方登录；Codex增强已设为兼容增强。": "Switched back to official login; Codex enhancements set to compatible.",
-  "已切换到纯 API；Codex增强已设为完整增强。": "Switched to pure API; Codex enhancements set to full.",
+  "已切回官方登录；Codex 增强已设为兼容增强。": "Switched back to official login; Codex enhancements set to compatible.",
+  "已切换到纯 API；Codex 增强已设为完整增强。": "Switched to pure API; Codex enhancements set to full.",
   "已刷新 Codex 应用、入口和 Watcher 状态。": "Refreshed Codex app, entrypoint and watcher status.",
   "已受理": "Accepted",
   "已安装": "Installed",
@@ -295,8 +297,8 @@ export const EN_PLAIN: Record<string, string> = {
   "应用路径留空时使用已保存路径；没有保存路径时使用自动探测": "When the app path is empty, the saved path is used; with no saved path, auto-detection is used",
   "应用路径覆盖": "App path override",
   "开启": "On",
-  "开启后，通过 Codex++ 启动 Codex 前自动整理一次旧对话的归属标记。":
-    "When on, tidies up ownership tags of old conversations once before launching Codex through Codex++.",
+  "开启后，通过 Codex Deck 启动 Codex 前自动整理一次旧对话的归属标记。":
+    "When on, tidies up ownership tags of old conversations once before launching Codex through Codex Deck.",
   "强制中文界面": "Force Chinese UI",
   "强制启用 Codex App 内置 zh-CN 语言包，避免 Statsig/VPN 不通时回退英文。需重启 Codex 才能完整生效。":
     "Forces the Codex app's built-in zh-CN language pack to avoid falling back to English when Statsig/VPN is unreachable. Requires restarting Codex to fully apply.",
@@ -333,12 +335,11 @@ export const EN_PLAIN: Record<string, string> = {
   "或": " or ",
   "手动": "Manual",
   "手动启动": "Manual launch",
-  "打开关于": "Open About",
   "打开链接": "Open link",
   "打开项目主页": "Open project homepage",
   "扩展项": "entry",
   "批量删除会话": "Bulk delete sessions",
-  "把 Codex++ 菜单插入 Codex 顶部原生菜单栏。": "Insert the Codex++ menu into Codex's top native menu bar.",
+  "把 Codex Deck 菜单插入 Codex 顶部原生菜单栏。": "Insert the Codex Deck menu into Codex's native top menu bar.",
   "把主对话和输入框限制到固定最大宽度，适合大屏阅读。": "Constrain the main conversation and input box to a fixed max width, good for large-screen reading.",
   "把会话移动到普通对话或其他本地项目。": "Move a session to a regular conversation or another local project.",
   "投稿": "Submit",
@@ -363,8 +364,8 @@ export const EN_PLAIN: Record<string, string> = {
   "官方远端插件缓存": "Official remote plugin cache",
   "官方远端插件缓存进度": "Official remote plugin cache progress",
   "官方远端插件缓存修复失败，请查看错误提示后重试。": "Official remote plugin cache repair failed. Check the error message and retry.",
-  "使用 Codex++ 内置快照补齐远端插件，API 模式也可显示和安装 Product Design 插件。":
-    "Use the embedded Codex++ snapshot to add remote plugins, so API mode can also show and install the Product Design plugin.",
+  "使用 Codex Deck 内置快照补齐远端插件，API 模式也可显示和安装 Product Design 插件。":
+    "Use the embedded Codex Deck snapshot to add remote plugins, so API mode can also show and install the Product Design plugin.",
   "搜索供应商…": "Search providers…",
   "数据库": "Database",
   "新增": "Add ",
@@ -377,13 +378,13 @@ export const EN_PLAIN: Record<string, string> = {
   "时间": "Time",
   "桌宠跟随真实鼠标": "Real-mouse pet look",
   "释放并注册内置缓存": "Extract and register embedded cache",
-  "显示服务模式切换按钮；Fast 仅支持 gpt-5.4 / gpt-5.5，其他模型按 Standard 发送。":
-    "Show the service-tier toggle button; Fast only supports gpt-5.4 / gpt-5.5, other models are sent as Standard.",
+  "是否开启系统 Fast 开关：已默认开启，API Key 登录复用 Codex 原生速度选项与标识；具体 Fast / Standard 在 Codex 界面选择。":
+    "System Fast is enabled by default. API Key login reuses Codex's native speed control and indicator; choose Fast or Standard in Codex.",
   "暂无": "None",
   "暂无启动状态。": "No launch status yet.",
   "暂无描述。": "No description.",
   "暂无日志。": "No logs.",
-  "暂无状态文件": "No status file",
+  "暂无启动状态": "No launch status",
   "暂无项目。": "No projects.",
   "更多选项": "More options",
   "更新": "Update",
@@ -404,10 +405,9 @@ export const EN_PLAIN: Record<string, string> = {
   "未归档": "Not archived",
   "未检查": "Not checked",
   "未检测到": "Not detected",
-  "未检测到 Codex 应用版本。": "Codex app version not detected.",
   "未发现缓存": "Cache not found",
-  "未发现本地缓存；点击按钮会从 Codex++ 内置快照释放并注册，无需官方账号预缓存。":
-    "Local cache not found. Click the button to extract and register the embedded Codex++ snapshot; no official-account pre-cache is required.",
+  "未发现本地缓存；点击按钮会从 Codex Deck 内置快照释放并注册，无需官方账号预缓存。":
+    "Local cache not found. Extract and register the embedded Codex Deck snapshot; no official-account pre-cache is required.",
   "未知": "Unknown",
   "未知作者": "Unknown author",
   "未知来源": "Unknown source",
@@ -434,10 +434,10 @@ export const EN_PLAIN: Record<string, string> = {
   "诊断供应商": "Diagnose provider",
   "检测": "Detect",
   "检测到 OPENAI 环境变量": "OPENAI environment variables detected",
-  "检测到来自网页的供应商配置导入请求，确认后会写入本机 Codex++ 管理工具。":
-    "A provider config import request from the web was detected; confirming writes it to this machine's Codex++ manager.",
+  "检测到来自网页的供应商配置导入请求，确认后会写入本机 Codex Deck 管理工具。":
+    "A provider config import request from the web was detected; confirming writes it to this machine's Codex Deck manager.",
   "概览": "Overview",
-  "概览只展示关键问题，具体配置在对应页面处理": "The overview shows only key issues; specific configuration is handled on the relevant pages",
+  "路径可复制，问题可在原位置修复": "Paths can be copied and issues repaired where they appear",
   "概览已检查": "Overview checked",
   "模型列表": "Model list",
   "模型名称": "Model name",
@@ -460,9 +460,9 @@ export const EN_PLAIN: Record<string, string> = {
   "正在解压并校验插件文件…": "Extracting and verifying plugin files…",
   "正在连接 openai/plugins…": "Connecting to openai/plugins…",
   "正常": "OK",
-  "此上游会通过本地 127.0.0.1:57321 转成 Responses API，需要从 Codex++ 启动 Codex。":
-    "This upstream is converted to the Responses API via local 127.0.0.1:57321, which requires launching Codex from Codex++.",
-  "此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex增强仍使用兼容模式。":
+  "此上游会通过本地 127.0.0.1:57321 转成 Responses API，需要从 Codex Deck 启动 Codex。":
+    "This upstream is converted to the Responses API via local 127.0.0.1:57321, which requires launching Codex from Codex Deck.",
+  "此供应商会保留官方登录模式，并把请求混入当前 API Key；Codex 增强仍使用兼容模式。":
     "This provider keeps official login mode and mixes the current API Key into requests; Codex enhancements stay in compatible mode.",
   "此供应商会切回官方登录模式，使用 ChatGPT 官方账号，不写入 API Key。":
     "This provider switches back to official login mode using the official ChatGPT account, without writing an API Key.",
@@ -515,7 +515,7 @@ export const EN_PLAIN: Record<string, string> = {
   "管理 API 供应商、协议、Key 与配置文件": "Manage API providers, protocols, keys and config files",
   "管理 Codex SSH 项目并加入 Zed workspace": "Manage Codex SSH projects and add them to a Zed workspace",
   "管理工具入口": "Manager entrypoint",
-  "管理控制台": "Management console",
+  "主导航": "Main navigation",
   "管理控制台入口": "Management console entrypoint",
   "类型": "Type",
   "粘贴修复": "Paste fix",
@@ -525,12 +525,12 @@ export const EN_PLAIN: Record<string, string> = {
   "纯 API 模式": "Pure API mode",
   "纯 API 配置未完整写入：请检查此供应商是否有 OPENAI_API_KEY，且 config.toml 是否包含 model_provider / provider / base_url。":
     "Pure API config is incomplete: check whether this provider has OPENAI_API_KEY and whether config.toml includes model_provider / provider / base_url.",
-  "维护 Codex++ 自己的远程项目最近列表。": "Maintain Codex++'s own recent list of remote projects.",
+  "维护 Codex Deck 自己的远程项目最近列表。": "Maintain Codex Deck's own recent remote-project list.",
   "编辑": "Edit",
   "编辑后保存列表，再切换模式时会使用新配置": "After editing, save the list; the new config is used the next time you switch modes",
   "编辑扩展项": "Edit entry",
   "缺失": "Missing",
-  "缺少 Codex++ 静默启动快捷方式时可在安装维护页修复。": "When the Codex++ silent launch shortcut is missing, repair it on the Install & Maintenance page.",
+  "缺少 Codex Deck 静默启动快捷方式时可在安装维护页修复。": "When the Codex Deck silent-launch shortcut is missing, repair it on the Install & Maintenance page.",
   "缺少管理工具快捷方式时可在安装维护页修复。": "When the manager shortcut is missing, repair it on the Install & Maintenance page.",
   "聚合": "Aggregate",
   "聚合/中转": "Aggregate/relay",
@@ -613,7 +613,7 @@ export const EN_PLAIN: Record<string, string> = {
   "配置": "Config",
   "配置文件": "Config file",
   "配置模型": "Config model",
-  "重启 Codex++": "Restart Codex++",
+  "重启 Codex Deck": "Restart Codex Deck",
   "重新安装": "Reinstall",
   "重新生成": "Regenerate",
   "重置背景": "Reset background",
@@ -640,10 +640,40 @@ export const EN_PLAIN: Record<string, string> = {
   "不可用": "Unavailable",
   "VL 模型自身的 API 协议，与主中转协议无关；仅 Chat Completions 格式的请求会触发 VL 处理":
     "The VL model's own API protocol, independent of the main relay protocol. Only Chat Completions format requests trigger VL processing.",
-  "以下仅在选择 Chat Completions 协议时生效：勾选「只支持文本」可标记为纯文本模型（DeepSeek-V4/GLM-5.2等），Codex++ 会在转发前静默丢弃 input_image；务必同时在 Codex++ 设置中配置支持图片输入的模型，input_image 将由该模型解析。":
-    "Effective only when Chat Completions protocol is selected: check \"Text only\" to mark a model as text-only (e.g. DeepSeek-V4/GLM-5.2), and Codex++ will silently drop input_image before forwarding. Be sure to also configure a vision-capable model in Codex++ settings — input_image will be interpreted by that model.",
+  "以下仅在选择 Chat Completions 协议时生效：勾选「只支持文本」可标记为纯文本模型（DeepSeek-V4/GLM-5.2等），Codex Deck 会在转发前静默丢弃 input_image；务必同时在 Codex Deck 设置中配置支持图片输入的模型，input_image 将由该模型解析。":
+    "Effective only when Chat Completions is selected: mark text-only models (for example DeepSeek-V4 or GLM-5.2) with \"Text only\". Codex Deck will silently drop input_image before forwarding; configure a vision-capable model in Codex Deck settings to interpret input_image.",
   "上下文窗口特指调用视觉模型的窗口长度，窗口范围内的图片及文字整体发给视觉模型调用 VL；0 表示不限制。此设置只影响 VL 处理范围，不影响主对话的压缩阈值。":
     "The context window here refers to the window length for the vision model call: images and text within the window are sent together to the vision model for VL processing. 0 means no limit. This setting only affects VL processing scope and does not affect the main conversation compression threshold.",
+  "工作台": "Workspace",
+  "扩展": "Extensions",
+  "系统": "System",
+  "等待状态检查": "Awaiting status check",
+  "正在连接本机 Codex": "Connecting to local Codex",
+  "系统状态": "System status",
+  "优先展示影响 Codex 使用的问题": "Issues affecting Codex are shown first",
+  "快捷入口": "Entrypoints",
+  "暂无记录": "No records",
+  "重新检查": "Check again",
+  "查看日志与诊断": "View logs & diagnostics",
+  "全部关键状态正常": "All key systems healthy",
+  "存在待检查或待修复状态": "Some states need checking or repair",
+  "第三方非官方 Codex 管理工具，与 OpenAI 无隶属或背书关系。":
+    "An unofficial third-party Codex management tool, not affiliated with or endorsed by OpenAI.",
+  "视觉模型中转（VL）": "Vision model relay (VL)",
+  "纯文本模型（如 DeepSeek-V4/GLM-5.2等）默认不识别图片。开启后，Codex Deck 会先调此处配置的视觉模型 API 把图片翻译为文字，再交给纯文本模型；VL 不可用时自动降级为丢弃图片。":
+    "Text-only models such as DeepSeek-V4 and GLM-5.2 do not process images by default. When enabled, Codex Deck uses the configured vision API to convert images to text before passing them to the text-only model; if VL is unavailable, images are dropped.",
+  "启用视觉模型中转": "Enable vision model relay",
+  "关闭时，纯文本模型（模型列表里勾选「只支持文本」的）会丢弃图片，视觉模型保留原图":
+    "When off, models marked as text-only drop images while vision models keep the originals",
+  "例如 qwen-vl-plus / kimi-2.6 / gpt-4o-mini": "e.g. qwen-vl-plus / kimi-2.6 / gpt-4o-mini",
+  "最大回复 token": "Maximum response tokens",
+  "上下文窗口（token）": "Context window (tokens)",
+  "只支持文本": "Text only",
+  "不支持推理": "No reasoning support",
+  "仅 Chat Completions 协议生效：标记为纯文本模型（DeepSeek-V4/GLM-5.2 等），Codex Deck 在转发前静默丢弃 input_image；务必同时在 Codex Deck 设置中配置支持图片输入的模型以解析 input_image":
+    "Chat Completions only: marks a model such as DeepSeek-V4 or GLM-5.2 as text-only, so Codex Deck silently drops input_image before forwarding. Also configure a vision-capable model in Codex Deck settings to interpret input_image.",
+  "勾选以标记为不支持 reasoning 的模型（如 kimi-2.6 on Ark），Codex Deck 会在透传前剥除 reasoning 字段":
+    "Marks a model such as kimi-2.6 on Ark as not supporting reasoning, so Codex Deck strips the reasoning field before forwarding.",
 };
 
 // Interpolated strings: tf("前缀 {0}", [x]) -> EN_TEMPLATE["前缀 {0}"] with {0} filled.
@@ -653,7 +683,7 @@ export const EN_TEMPLATE: Record<string, string> = {
   "{0} ms": "{0} ms",
   "{0} · {1} 个成员": "{0} · {1} member(s)",
   "{0} 个": "{0}",
-  "{0} 个 Codex++ 可识别项目，默认策略：{1}": "{0} project(s) recognized by Codex++, default strategy: {1}",
+  "{0} 个 Codex Deck 可识别项目，默认策略：{1}": "{0} project(s) recognized by Codex Deck, default strategy: {1}",
   "{0} 个供应商": "{0} provider(s)",
   "{0} 个供应商配置；可拖动排序，点编辑进入详情": "{0} provider configuration(s); drag to reorder, click edit for details",
   "{0} 个市场脚本，已安装 {1} 个，本地整体 {2}": "{0} marketplace script(s), {1} installed, local overall {2}",

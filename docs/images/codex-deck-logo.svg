@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Codex Deck</title>
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#2563EB" />
+  <path
+    d="M37 16H27C19.82 16 14 21.82 14 29V35C14 42.18 19.82 48 27 48H37"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-linecap="round"
+    stroke-width="5.5"
+  />
+  <path
+    d="M40 23L49 32L40 41"
+    fill="none"
+    stroke="#A6F4D0"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="5.5"
+  />
+</svg>

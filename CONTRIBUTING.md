@@ -6,8 +6,8 @@ Thank you for your interest in contributing to CodexPlusPlus!
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/BigPizzaV3/CodexPlusPlus.git
-   cd CodexPlusPlus
+   git clone https://github.com/nanzheyin/-codexplus.git codexplus
+   cd codexplus
    ```
 
 2. **Install Rust toolchain**
