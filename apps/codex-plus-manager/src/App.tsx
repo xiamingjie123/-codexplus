@@ -8,6 +8,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import {
+  rectSortingStrategy,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -18,22 +19,34 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  ArrowDownWideNarrow,
   AppWindow,
   ArrowLeft,
   Bell,
+  Boxes,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Clock3,
   CircleArrowUp,
   Copy,
+  Database,
   Download,
   Edit3,
+  Filter,
   Gauge,
   GripVertical,
   Info,
   ExternalLink,
   Hammer,
   KeyRound,
+  LayoutGrid,
   Languages,
   LayoutDashboard,
+  Link2,
+  List,
   MessageCircle,
   FileCode2,
   Moon,
@@ -42,9 +55,11 @@ import {
   Power,
   PowerOff,
   Plus,
+  Play,
   RefreshCw,
   Rocket,
   Save,
+  Search,
   Settings,
   ShieldCheck,
   ShieldAlert,
@@ -52,7 +67,10 @@ import {
   Sun,
   TestTube,
   Trash2,
+  Users,
   Wrench,
+  Workflow,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { ProviderPresetSelector } from "@/components/ProviderPresetSelector";
@@ -272,6 +290,8 @@ type RelayContextSelection = {
 };
 
 type ContextKind = "mcp" | "skill" | "plugin";
+type ContextStatusFilter = "all" | "enabled" | "disabled";
+type ContextListSort = "config" | "name" | "enabled";
 
 type CodexContextEntry = {
   id: string;
@@ -290,6 +310,9 @@ type CodexContextEntries = {
 
 type RelayProtocol = "responses" | "chatCompletions";
 type RelayMode = "official" | "mixedApi" | "pureApi" | "aggregate";
+type RelayListView = "grid" | "list";
+type RelayListFilter = "all" | "api" | "aggregate";
+type RelayListSort = "manual" | "name";
 const PROTOCOL_PROXY_BASE_URL = "http://127.0.0.1:57321/v1";
 const CHAT_UPSTREAM_BASE_URL_KEY = "codex_plus_chat_base_url";
 const SCRIPT_MARKET_REPOSITORY_URL = "https://github.com/BigPizzaV3/CodexPlusPlusScriptMarket";
@@ -353,6 +376,9 @@ type LocalSession = {
   rolloutPath: string;
   dbPath: string;
 };
+
+type SessionListFilter = "all" | "active" | "archived";
+type SessionListSort = "newest" | "oldest";
 
 type LocalSessionsResult = CommandResult<{
   dbPath: string;
@@ -2361,12 +2387,12 @@ type Actions = {
   setProviderSyncTarget: (provider: string) => void;
   setLaunchMode: (launchMode: LaunchMode) => Promise<void>;
   refreshRelay: () => Promise<void>;
-  refreshRelayFiles: () => Promise<RelayFilesResult | null>;
+  refreshRelayFiles: (silent?: boolean) => Promise<RelayFilesResult | null>;
   refreshEnvConflicts: (silent?: boolean) => Promise<EnvConflictsResult | null>;
   removeEnvConflicts: (names: string[]) => Promise<void>;
   refreshCcsProviders: (silent?: boolean) => Promise<CcsProvidersResult | null>;
   importCcsProviders: () => Promise<void>;
-  refreshLiveContextEntries: () => Promise<LiveContextEntriesResult | null>;
+  refreshLiveContextEntries: (silent?: boolean) => Promise<LiveContextEntriesResult | null>;
   syncLiveContextEntries: (settings: BackendSettings, silent?: boolean) => Promise<LiveContextEntriesResult | null>;
   refreshScriptMarket: () => Promise<void>;
   installMarketScript: (id: string) => Promise<void>;
@@ -2427,18 +2453,39 @@ function OverviewScreen({
   const shortcutsReady = [overview?.silent_shortcut.status, overview?.management_shortcut.status]
     .filter((status) => status === "installed").length;
   const allHealthy = Boolean(overview?.codex_version) && health.every((item) => item.ok);
+  const issueCount = health.filter((item) => !item.ok).length + (overview?.codex_version ? 0 : 1);
+  const orderedHealth = [...health].sort((left, right) => Number(left.ok) - Number(right.ok));
   return (
-    <>
-      <section className="overview-summary" aria-labelledby="system-status-heading">
-        <div className="overview-section-head">
+    <div className="deck-page overview-deck-page">
+      <section className={`overview-status-band ${allHealthy ? "ready" : "attention"}`} aria-labelledby="system-status-heading">
+        <div className="overview-status-copy">
+          <span className="overview-status-icon" aria-hidden="true">
+            {allHealthy ? <ShieldCheck className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
+          </span>
           <div>
             <h2 id="system-status-heading">{t("系统状态")}</h2>
-            <p>{t("优先展示影响 Codex 使用的问题")}</p>
+            <p>{allHealthy ? t("全部关键状态正常") : tf("发现 {0} 个需要处理的状态", [issueCount])}</p>
           </div>
-          <div className={`overview-health-state ${allHealthy ? "ready" : ""}`}>
-            <span aria-hidden="true" />
-            <Badge status={allHealthy ? "ok" : overview ? "missing" : "not_checked"} />
+        </div>
+        <div className="overview-status-actions">
+          <Button onClick={() => void actions.checkHealth()} variant="outline">
+            <RefreshCw className="h-4 w-4" />
+            {t("重新检查")}
+          </Button>
+          <Button onClick={() => void actions.launch()}>
+            <Rocket className="h-4 w-4" />
+            {t("启动 Codex")}
+          </Button>
+        </div>
+      </section>
+
+      <section className="overview-summary" aria-label={t("运行状态概览")}>
+        <div className="overview-section-head">
+          <div>
+            <h2>{t("运行概览")}</h2>
+            <p>{t("版本、应用、入口和最近启动状态")}</p>
           </div>
+          <Badge status={allHealthy ? "ok" : overview ? "missing" : "not_checked"} />
         </div>
         <div className="dashboard-metrics">
           <DashboardMetric
@@ -2472,10 +2519,10 @@ function OverviewScreen({
 
       <div className="overview-main-grid">
         <Panel className="overview-health-panel">
-          <CardHead title={t("健康检查")} detail={t("路径可复制，问题可在原位置修复")} />
+          <CardHead title={t("需要关注")} detail={issueCount ? tf("{0} 个状态等待处理", [issueCount]) : t("当前没有阻塞项")} />
           <CardContent>
             <div className="health-grid">
-              {health.map((item) => (
+              {orderedHealth.map((item) => (
                 <div className={`health-item ${item.ok ? "ok" : "needs-fix"}`} key={item.title}>
                   {item.ok ? <CheckCircle2 className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
                   <div>
@@ -2499,7 +2546,7 @@ function OverviewScreen({
           </CardContent>
         </Panel>
         <Panel className="overview-launch-panel">
-          <CardHead title={t("最近启动")} detail={overview?.latest_launch?.message ?? t("暂无启动状态")} />
+          <CardHead title={t("最近启动")} detail={overview?.latest_launch ? formatTime(overview.latest_launch.started_at_ms) : t("暂无启动状态")} />
           <CardContent>
             <LatestLaunch status={overview?.latest_launch ?? null} />
             <Toolbar>
@@ -2513,21 +2560,21 @@ function OverviewScreen({
 
       <div className="overview-command-bar">
         <div>
-          <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-          <span>{allHealthy ? t("全部关键状态正常") : t("存在待检查或待修复状态")}</span>
+          {allHealthy ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : <ShieldAlert className="h-4 w-4" aria-hidden="true" />}
+          <span>{allHealthy ? t("Codex Deck 已准备就绪") : t("建议先处理异常状态再启动 Codex")}</span>
         </div>
         <Toolbar>
           <Button variant="outline" onClick={() => void actions.repairShortcuts()}>
             <Wrench className="h-4 w-4" />
             {t("修复入口")}
           </Button>
-          <Button onClick={() => void actions.launch()}>
-            <Rocket className="h-4 w-4" />
-            {t("启动 Codex")}
+          <Button variant="secondary" onClick={() => void actions.goLogs()}>
+            <FileCode2 className="h-4 w-4" />
+            {t("日志与诊断")}
           </Button>
         </Toolbar>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -2579,6 +2626,34 @@ function RelayScreen({
   const [detailProfileId, setDetailProfileId] = useState<string | null>(null);
   const [newProfileDraft, setNewProfileDraft] = useState<RelayProfile | null>(null);
   const [thirdPartyImportOpen, setThirdPartyImportOpen] = useState(false);
+  const [relaySearch, setRelaySearch] = useState("");
+  const [relayListView, setRelayListView] = useState<RelayListView>("grid");
+  const [relayListFilter, setRelayListFilter] = useState<RelayListFilter>("all");
+  const [relayListSort, setRelayListSort] = useState<RelayListSort>("manual");
+  const relayProfilesForDisplay = useMemo(() => {
+    const query = relaySearch.trim().toLocaleLowerCase();
+    const profiles = normalized.relayProfiles.filter((profile) => {
+      const isAggregate = isAggregateRelayProfile(profile);
+      if (relayListFilter === "api" && isAggregate) return false;
+      if (relayListFilter === "aggregate" && !isAggregate) return false;
+      if (!query) return true;
+      return [
+        profile.name,
+        profile.baseUrl,
+        profile.upstreamBaseUrl,
+        relayModeLabel(profile.relayMode),
+        relayProtocolLabel(profile.protocol),
+      ]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(query);
+    });
+    if (relayListSort === "name") {
+      profiles.sort((left, right) => (left.name || t("未命名供应商")).localeCompare(right.name || t("未命名供应商"), getLanguage() === "zh" ? "zh-CN" : "en"));
+    }
+    return profiles;
+  }, [normalized.relayProfiles, relayListFilter, relayListSort, relaySearch]);
+  const relayReorderEnabled = relayListSort === "manual" && relayListFilter === "all" && !relaySearch.trim();
   const detailProfile = newProfileDraft || (detailProfileId
     ? normalized.relayProfiles.find((profile) => profile.id === detailProfileId) || null
     : null);
@@ -2643,83 +2718,164 @@ function RelayScreen({
 
   return (
     <>
-      <Panel>
-        <CardHead title={t("供应商列表")} detail={tf("{0} 个供应商配置；可拖动排序，点编辑进入详情", [normalized.relayProfiles.length])} />
-        <CardContent>
+      <Panel className="relay-control-panel">
+        <CardContent className="relay-control-content">
           <EnvConflictNotice envConflicts={envConflicts} actions={actions} />
-          <label className="switch-row relay-master-switch">
-            <input
-              checked={normalized.relayProfilesEnabled}
-              onChange={(event) => {
-                const next = { ...normalized, relayProfilesEnabled: event.currentTarget.checked };
-                void saveRelaySettings(next);
-              }}
-              type="checkbox"
-            />
-            <span>
-              <strong>{t("启用供应商配置切换")}</strong>
-              <small>{t("关闭后本工具不会在手动切换时写入 Codex 的 config.toml / auth.json；启动 Codex 时始终不会自动改这些文件。")}</small>
-            </span>
-          </label>
-          <div className="relay-add-row">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setNewProfileDraft(createRelayProfile(normalized));
-                setDetailProfileId(null);
-              }}
-            >
-              <Plus className="h-4 w-4" />
-              {t("添加供应商")}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={createNewAggregateProfile}
-            >
-              <Plus className="h-4 w-4" />
-              {t("添加聚合供应商")}
-            </Button>
-            <div className="third-party-import">
+          <div className="relay-cockpit-toolbar">
+            <label className="relay-search-field">
+              <Search className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">{t("搜索供应商")}</span>
+              <Input
+                aria-label={t("搜索供应商")}
+                onChange={(event) => setRelaySearch(event.currentTarget.value)}
+                placeholder={t("搜索供应商名称或 Base URL...")}
+                value={relaySearch}
+              />
+            </label>
+            <div className="relay-view-toggle" aria-label={t("切换视图")} role="group">
               <Button
-                onClick={openThirdPartyImport}
+                aria-label={t("列表视图")}
+                className="relay-view-button"
+                onClick={() => setRelayListView("list")}
+                size="icon"
+                title={t("列表视图")}
+                variant={relayListView === "list" ? "secondary" : "ghost"}
+              >
+                <List className="h-4 w-4" />
+              </Button>
+              <Button
+                aria-label={t("卡片视图")}
+                className="relay-view-button"
+                onClick={() => setRelayListView("grid")}
+                size="icon"
+                title={t("卡片视图")}
+                variant={relayListView === "grid" ? "default" : "ghost"}
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
+            </div>
+            <label className="relay-toolbar-select-wrap">
+              <Filter className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">{t("筛选供应商")}</span>
+              <select
+                aria-label={t("筛选供应商")}
+                className="relay-toolbar-select"
+                onChange={(event) => setRelayListFilter(event.currentTarget.value as RelayListFilter)}
+                value={relayListFilter}
+              >
+                <option value="all">{tf("全部 ({0})", [normalized.relayProfiles.length])}</option>
+                <option value="api">{tf("API 供应商 ({0})", [normalized.relayProfiles.filter((profile) => !isAggregateRelayProfile(profile)).length])}</option>
+                <option value="aggregate">{tf("聚合供应商 ({0})", [normalized.relayProfiles.filter(isAggregateRelayProfile).length])}</option>
+              </select>
+            </label>
+            <label className="relay-toolbar-select-wrap">
+              <ArrowDownWideNarrow className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">{t("排序方式")}</span>
+              <select
+                aria-label={t("排序方式")}
+                className="relay-toolbar-select"
+                onChange={(event) => setRelayListSort(event.currentTarget.value as RelayListSort)}
+                value={relayListSort}
+              >
+                <option value="manual">{t("手动顺序")}</option>
+                <option value="name">{t("按名称")}</option>
+              </select>
+            </label>
+            <label className="relay-toolbar-switch">
+              <input
+                checked={normalized.relayProfilesEnabled}
+                onChange={(event) => {
+                  const next = { ...normalized, relayProfilesEnabled: event.currentTarget.checked };
+                  void saveRelaySettings(next);
+                }}
+                type="checkbox"
+              />
+              <span>
+                <strong>{t("供应商切换")}</strong>
+                <small>{normalized.relayProfilesEnabled ? t("已启用") : t("已禁用")}</small>
+              </span>
+            </label>
+            <div className="relay-toolbar-actions">
+              <Button
+                aria-label={t("添加供应商")}
+                onClick={() => {
+                  setNewProfileDraft(createRelayProfile(normalized));
+                  setDetailProfileId(null);
+                }}
+                size="icon"
+                title={t("添加供应商")}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+              <Button
+                aria-label={t("添加聚合供应商")}
+                onClick={createNewAggregateProfile}
+                size="icon"
+                title={t("添加聚合供应商")}
                 variant="secondary"
               >
-                <Download className="h-4 w-4" />
-                {t("从第三方导入")}
+                <Network className="h-4 w-4" />
               </Button>
-              {thirdPartyImportOpen ? (
-                <div className="third-party-import-menu">
-                  <button
-                    disabled={!ccsProviders?.providers.length}
-                    onClick={() => {
-                      setThirdPartyImportOpen(false);
-                      void actions.importCcsProviders();
-                    }}
-                    type="button"
-                  >
-                    <strong>ccswitch</strong>
-                    <span>{ccsProviderSummary(ccsProviders)}</span>
-                  </button>
-                  <button
-                    onClick={() => void actions.refreshCcsProviders()}
-                    type="button"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    {t("刷新列表")}
-                  </button>
-                </div>
-              ) : null}
+              <div className="third-party-import">
+                <Button
+                  aria-label={t("从第三方导入")}
+                  onClick={openThirdPartyImport}
+                  size="icon"
+                  title={t("从第三方导入")}
+                  variant="secondary"
+                >
+                  <Download className="h-4 w-4" />
+                </Button>
+                {thirdPartyImportOpen ? (
+                  <div className="third-party-import-menu">
+                    <button
+                      disabled={!ccsProviders?.providers.length}
+                      onClick={() => {
+                        setThirdPartyImportOpen(false);
+                        void actions.importCcsProviders();
+                      }}
+                      type="button"
+                    >
+                      <strong>ccswitch</strong>
+                      <span>{ccsProviderSummary(ccsProviders)}</span>
+                    </button>
+                    <button
+                      onClick={() => void actions.refreshCcsProviders()}
+                      type="button"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      {t("刷新列表")}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
-          <RelayProfileList
-            form={normalized}
-            onEdit={(profileId) => void editRelayProfile(profileId)}
-            onFormChange={saveRelaySettings}
-            disabled={!normalized.relayProfilesEnabled || actions.relaySwitching}
-            actions={actions}
-          />
+          <p className="relay-master-note">{t("关闭后本工具不会在手动切换时写入 Codex 的 config.toml / auth.json；启动 Codex 时始终不会自动改这些文件。")}</p>
         </CardContent>
       </Panel>
+      <section className="relay-provider-section">
+        <div className="relay-list-heading">
+            <div>
+              <strong>{t("供应商")}</strong>
+              <span>{tf("{0} 个配置", [relayProfilesForDisplay.length])}</span>
+            </div>
+            <span className={`relay-switch-status ${normalized.relayProfilesEnabled ? "enabled" : "disabled"}`}>
+              <span aria-hidden="true" className="relay-status-dot" />
+              {normalized.relayProfilesEnabled ? t("当前配置可正常切换") : t("供应商配置已关闭")}
+            </span>
+        </div>
+        <RelayProfileList
+          form={normalized}
+          onEdit={(profileId) => void editRelayProfile(profileId)}
+          onFormChange={saveRelaySettings}
+          disabled={!normalized.relayProfilesEnabled || actions.relaySwitching}
+          actions={actions}
+          profiles={relayProfilesForDisplay}
+          reorderEnabled={relayReorderEnabled}
+          view={relayListView}
+        />
+      </section>
     </>
   );
 }
@@ -2771,6 +2927,51 @@ function envConflictSourceLabel(source: string): string {
   return source || t("环境变量");
 }
 
+type DeckSectionOption<T extends string> = {
+  id: T;
+  label: string;
+  detail: string;
+  icon: LucideIcon;
+};
+
+function DeckSectionNav<T extends string>({
+  label,
+  options,
+  active,
+  onChange,
+}: {
+  label: string;
+  options: Array<DeckSectionOption<T>>;
+  active: T;
+  onChange: (section: T) => void;
+}) {
+  return (
+    <nav aria-label={label} className="deck-section-nav">
+      {options.map((option) => {
+        const Icon = option.icon;
+        return (
+          <button
+            aria-current={active === option.id ? "page" : undefined}
+            className={active === option.id ? "active" : ""}
+            key={option.id}
+            onClick={() => onChange(option.id)}
+            type="button"
+          >
+            <span className="deck-section-nav-icon"><Icon className="h-4 w-4" /></span>
+            <span>
+              <strong>{option.label}</strong>
+              <small>{option.detail}</small>
+            </span>
+            <ChevronRight className="h-4 w-4 deck-section-nav-arrow" />
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+type EnhanceSection = "plugins" | "conversation" | "stepwise" | "interface" | "remote";
+
 function EnhanceScreen({
   form,
   pluginMarketplaceProgress,
@@ -2805,12 +3006,23 @@ function EnhanceScreen({
         String(remotePluginMarketplace.skillCount),
       ])
     : t("未发现本地缓存；点击按钮会从 Codex Deck 内置快照释放并注册，无需官方账号预缓存。");
+  const [activeSection, setActiveSection] = useState<EnhanceSection>("plugins");
+  const enhanceSections: Array<DeckSectionOption<EnhanceSection>> = [
+    { id: "plugins", label: t("插件与模型"), detail: t("市场、模型与服务档位"), icon: Boxes },
+    { id: "conversation", label: t("对话与输入"), detail: t("会话、导出和输入体验"), icon: MessageCircle },
+    { id: "stepwise", label: "Stepwise", detail: t("后续建议与发送方式"), icon: Workflow },
+    { id: "interface", label: t("界面与启动"), detail: t("语言、菜单和启动速度"), icon: AppWindow },
+    { id: "remote", label: t("远程项目"), detail: t("Zed 与 worktree 能力"), icon: Link2 },
+  ];
+  const activeSectionOption = enhanceSections.find((section) => section.id === activeSection) ?? enhanceSections[0];
+  const ActiveSectionIcon = activeSectionOption.icon;
   return (
-    <>
-      <Panel>
+    <div className="deck-page deck-settings-page enhance-deck-page">
+      <Panel className="enhance-master-panel">
         <CardHead title={t("Codex 增强")} detail={t("会话删除、导出、项目移动和用户脚本等界面能力")} />
         <CardContent>
-          <label className="switch-row">
+          <div className="enhance-master-grid">
+          <label className="switch-row enhance-master-switch">
             <input
               checked={form.enhancementsEnabled}
               onChange={(event) => onFormChange({ ...form, enhancementsEnabled: event.currentTarget.checked })}
@@ -2821,26 +3033,34 @@ function EnhanceScreen({
               <small>{t("关闭后会停用删除、导出、项目移动、插件相关和菜单位置增强。")}</small>
             </span>
           </label>
-          <label className="switch-row">
-            <input
-              checked={form.computerUseGuardEnabled}
-              onChange={(event) => onFormChange({ ...form, computerUseGuardEnabled: event.currentTarget.checked })}
-              type="checkbox"
-            />
-            <span>
-              <strong>{t("强制启用 Windows Computer Use Guard")}</strong>
-              <small>{t("插件市场解锁在完整增强模式下会自动准备 Browser、Chrome、Computer Use 的本地 bundled 状态；此开关用于在其他场景中强制执行同一守护。")}</small>
-            </span>
-          </label>
           <ModeSelector launchMode={form.launchMode} actions={actions} />
+          </div>
           {form.launchMode === "relay" ? (
             <div className="hint-line">
               <ShieldCheck className="h-4 w-4" />
               <span>{t("当前为兼容增强模式，插件市场解锁不会启用；其他页面功能仍可用。")}</span>
             </div>
           ) : null}
-          <div className="enhance-feature-groups">
+        </CardContent>
+      </Panel>
+      <div className="deck-settings-layout">
+        <DeckSectionNav
+          active={activeSection}
+          label={t("增强功能分类")}
+          onChange={setActiveSection}
+          options={enhanceSections}
+        />
+        <section className="deck-settings-content">
+          <div className="deck-settings-content-head">
+            <span className="deck-settings-content-icon"><ActiveSectionIcon className="h-4 w-4" /></span>
+            <div>
+              <h2>{activeSectionOption.label}</h2>
+              <p>{activeSectionOption.detail}</p>
+            </div>
+          </div>
+          <div className="enhance-feature-groups" data-active-section={activeSection}>
             <FeatureGroup title={t("插件与模型")} detail={t("管理插件市场、模型列表和服务档位相关增强。")}>
+              <FeatureToggle title={t("强制启用 Windows Computer Use Guard")} detail={t("在非完整增强场景中继续准备 Browser、Chrome 与 Computer Use 的本地守护状态。")} checked={form.computerUseGuardEnabled} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("computerUseGuardEnabled", value)} />
               <FeatureToggle title={t("插件市场解锁")} detail={t("API Key 模式下扩展插件市场请求，尽量显示完整插件列表；官方/混合模式通常不需要。")} checked={form.codexAppPluginMarketplaceUnlock} disabled={!masterEnabled || !patchMode} onChange={(value) => setEnhanceFlag("codexAppPluginMarketplaceUnlock", value)} />
               <FeatureToggle title={t("插件列表全量展示")} detail={t("进入插件页后自动连续展开“更多”，尽量一次显示完整插件列表。")} checked={form.codexAppPluginAutoExpand} disabled={!masterEnabled || !patchMode} onChange={(value) => setEnhanceFlag("codexAppPluginAutoExpand", value)} />
               <FeatureToggle title={t("模型白名单解锁")} detail={t("从环境变量和 config.toml 的 /v1/models 拉取模型并补进模型列表。")} checked={form.codexAppModelWhitelistUnlock} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppModelWhitelistUnlock", value)} />
@@ -2897,6 +3117,8 @@ function EnhanceScreen({
               <FeatureToggle title="Upstream worktree" detail={t("从最新 upstream 分支创建 Git worktree。")} checked={form.codexAppUpstreamWorktreeCreate} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppUpstreamWorktreeCreate", value)} />
             </FeatureGroup>
           </div>
+          {activeSection === "plugins" ? (
+            <>
           <div className="hint-line">
             <Wrench className="h-4 w-4" />
             <span>{t("新机器没有本地插件市场时，可从 openai/plugins 初始化到当前 CODEX_HOME。")}</span>
@@ -2906,6 +3128,9 @@ function EnhanceScreen({
           </div>
           <TaskProgressBox progress={pluginMarketplaceProgress} title={t("插件市场修复进度")} />
           <TaskProgressBox progress={remotePluginMarketplaceProgress} title={t("官方远端插件缓存进度")} />
+            </>
+          ) : null}
+          {activeSection === "remote" ? (
           <div className="zed-remote-settings">
             <Field label={t("Zed 默认打开策略")}>
               <select
@@ -2921,16 +3146,29 @@ function EnhanceScreen({
               </select>
             </Field>
           </div>
+          ) : null}
+          {activeSection === "plugins" ? (
           <div className="hint-line">
             <Info className="h-4 w-4" />
             <span>{t("如果使用官方模式或官方混入 API 模式，通常不需要开启插件市场解锁。")}</span>
           </div>
-          <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存增强设置")}</Button>
-          </Toolbar>
-        </CardContent>
-      </Panel>
-    </>
+          ) : null}
+        </section>
+      </div>
+      <div className="deck-save-bar">
+        <div>
+          <span className={masterEnabled ? "ready" : ""} aria-hidden="true" />
+          <div>
+            <strong>{masterEnabled ? t("Codex 增强已启用") : t("Codex 增强已关闭")}</strong>
+            <small>{t("更改保存后会在下次启动 Codex 时生效")}</small>
+          </div>
+        </div>
+        <Button onClick={() => void actions.saveSettings()}>
+          <Save className="h-4 w-4" />
+          {t("保存增强设置")}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -2946,11 +3184,28 @@ function ZedRemoteScreen({
   actions: Actions;
 }) {
   const allProjects = projects?.projects ?? [];
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState<"all" | "current" | "recent" | "discovered">("all");
   const currentProjects = allProjects.filter((project) => project.isCurrent);
   const currentIds = new Set(currentProjects.map((project) => project.id));
   const recentProjects = allProjects.filter((project) => !currentIds.has(project.id) && (project.source === "recent" || project.lastOpenedAtMs));
   const recentIds = new Set(recentProjects.map((project) => project.id));
   const discoveredProjects = allProjects.filter((project) => !currentIds.has(project.id) && !recentIds.has(project.id));
+  const categoryById = new Map<string, "current" | "recent" | "discovered">([
+    ...currentProjects.map((project) => [project.id, "current"] as const),
+    ...recentProjects.map((project) => [project.id, "recent"] as const),
+    ...discoveredProjects.map((project) => [project.id, "discovered"] as const),
+  ]);
+  const normalizedProjectSearch = projectSearch.trim().toLocaleLowerCase();
+  const visibleProjects = allProjects.filter((project) => {
+    const category = categoryById.get(project.id) ?? "discovered";
+    if (projectFilter !== "all" && category !== projectFilter) return false;
+    if (!normalizedProjectSearch) return true;
+    return [project.label, project.path, project.hostId, project.ssh.host, project.ssh.user, project.source]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(normalizedProjectSearch);
+  });
   const copyUrl = async (project: ZedRemoteProject) => {
     try {
       await navigator.clipboard.writeText(project.url);
@@ -2960,19 +3215,45 @@ function ZedRemoteScreen({
     }
   };
   return (
-    <>
-      <Panel>
-        <CardHead title={t("Zed 远程项目")} detail={tf("{0} 个 Codex Deck 可识别项目，默认策略：{1}", [allProjects.length, zedStrategyLabel(form.zedRemoteOpenStrategy)])} />
+    <div className="deck-page zed-deck-page">
+      <Panel className="zed-control-panel">
+        <CardHead title={t("Zed 远程项目")} detail={tf("{0} 个 Codex Deck 可识别项目", [allProjects.length])} />
         <CardContent>
-          <div className="metric-list">
-            <Metric label="Current" value={String(currentProjects.length)} />
-            <Metric label="Recent" value={String(recentProjects.length)} />
-            <Metric label="Discovered" value={String(discoveredProjects.length)} />
+          <div aria-label={t("项目来源筛选")} className="deck-stat-tabs" role="tablist">
+            {([
+              ["all", t("全部"), allProjects.length, Database],
+              ["current", "Current", currentProjects.length, Play],
+              ["recent", "Recent", recentProjects.length, Clock3],
+              ["discovered", "Discovered", discoveredProjects.length, Search],
+            ] as const).map(([id, label, count, Icon]) => (
+              <button
+                aria-selected={projectFilter === id}
+                className={projectFilter === id ? "active" : ""}
+                key={id}
+                onClick={() => setProjectFilter(id)}
+                role="tab"
+                type="button"
+              >
+                <span><Icon className="h-4 w-4" /></span>
+                <span><small>{label}</small><strong>{count}</strong></span>
+              </button>
+            ))}
           </div>
-          <div className="zed-remote-settings">
-            <Field label={t("默认打开策略")}>
+          <div className="deck-list-toolbar zed-list-toolbar">
+            <label className="deck-search-field">
+              <Search className="h-4 w-4" aria-hidden="true" />
+              <Input
+                aria-label={t("搜索远程项目")}
+                onChange={(event) => setProjectSearch(event.currentTarget.value)}
+                placeholder={t("搜索项目、主机或路径...")}
+                type="search"
+                value={projectSearch}
+              />
+            </label>
+            <label className="deck-toolbar-select">
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
               <select
-                className="select-input"
+                aria-label={t("默认打开策略")}
                 onChange={(event) => onFormChange({ ...form, zedRemoteOpenStrategy: event.currentTarget.value as ZedOpenStrategy })}
                 value={form.zedRemoteOpenStrategy}
               >
@@ -2981,8 +3262,8 @@ function ZedRemoteScreen({
                 <option value="newWindow">{t("新窗口")}</option>
                 <option value="default">{t("Zed 默认行为")}</option>
               </select>
-            </Field>
-            <label className="switch-row compact">
+            </label>
+            <label className="deck-toolbar-switch">
               <input
                 checked={form.zedRemoteProjectRegistryEnabled}
                 onChange={(event) => onFormChange({ ...form, zedRemoteProjectRegistryEnabled: event.currentTarget.checked })}
@@ -2990,26 +3271,66 @@ function ZedRemoteScreen({
               />
               <span>
                 <strong>{t("记录最近打开")}</strong>
-                <small>{t("保存到 Codex Deck state，不改写 Zed settings。")}</small>
               </span>
             </label>
-          </div>
-          <Toolbar>
-            <Button onClick={() => void actions.refreshZedRemoteProjects()}>
+            <div className="deck-toolbar-actions">
+            <Button aria-label={t("刷新项目")} onClick={() => void actions.refreshZedRemoteProjects()} size="icon" title={t("刷新项目")} variant="outline">
               <RefreshCw className="h-4 w-4" />
-              {t("刷新项目")}
             </Button>
             <Button variant="secondary" onClick={() => void actions.saveSettingsValue(form, false)}>
               <Save className="h-4 w-4" />
               {t("保存策略")}
             </Button>
-          </Toolbar>
+            </div>
+          </div>
         </CardContent>
       </Panel>
-      <ZedRemoteProjectSection title="Current" projects={currentProjects} actions={actions} onCopyUrl={copyUrl} />
-      <ZedRemoteProjectSection title="Recent" projects={recentProjects} actions={actions} onCopyUrl={copyUrl} />
-      <ZedRemoteProjectSection title="Discovered from Codex" projects={discoveredProjects} actions={actions} onCopyUrl={copyUrl} />
-    </>
+      <section className="zed-project-table" aria-label={t("远程项目列表")}>
+        <div className="zed-project-table-head">
+          <span>{t("项目")}</span>
+          <span>{t("来源")}</span>
+          <span>{t("最近打开")}</span>
+          <span>{t("操作")}</span>
+        </div>
+        <div className="zed-project-table-body">
+          {visibleProjects.length ? visibleProjects.map((project) => {
+            const category = categoryById.get(project.id) ?? "discovered";
+            return (
+              <div className="zed-project-table-row" key={project.id}>
+                <div className="zed-project-identity">
+                  <span><Link2 className="h-4 w-4" /></span>
+                  <div>
+                    <strong>{project.label}</strong>
+                    <small>{zedRemoteHostLabel(project)}</small>
+                    <code title={project.path}>{project.path}</code>
+                  </div>
+                </div>
+                <span className={`zed-project-source ${category}`}>{category === "current" ? "Current" : category === "recent" ? "Recent" : "Discovered"}</span>
+                <span className="zed-project-time">{project.lastOpenedAtMs ? formatTime(project.lastOpenedAtMs) : t("未打开")}</span>
+                <div className="zed-project-row-actions">
+                  <Button onClick={() => void actions.openZedRemoteProject(project, form.zedRemoteOpenStrategy)} size="sm">
+                    <ExternalLink className="h-4 w-4" />
+                    {t("打开")}
+                  </Button>
+                  <Button aria-label={t("复制 ssh:// URL")} onClick={() => void copyUrl(project)} size="icon" title={t("复制 ssh:// URL")} variant="ghost"><Copy className="h-4 w-4" /></Button>
+                  {project.source === "recent" ? <Button aria-label={t("移除最近记录")} onClick={() => void actions.forgetZedRemoteProject(project)} size="icon" title={t("移除最近记录")} variant="ghost"><Trash2 className="h-4 w-4" /></Button> : null}
+                </div>
+              </div>
+            );
+          }) : (
+            <div className="deck-empty-state">
+              <Search className="h-5 w-5" />
+              <strong>{t("没有匹配的远程项目")}</strong>
+              <span>{t("调整搜索词或项目来源筛选。")}</span>
+            </div>
+          )}
+        </div>
+        <div className="deck-list-footer">
+          <span>{tf("显示 {0} / {1} 个项目", [visibleProjects.length, allProjects.length])}</span>
+          <span>{tf("默认策略：{0}", [zedStrategyLabel(form.zedRemoteOpenStrategy)])}</span>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -3079,56 +3400,92 @@ function UserScriptsScreen({ settings, market, actions }: { settings: SettingsRe
   const scripts = inventory?.scripts ?? [];
   const marketScripts = market?.market.scripts ?? [];
   const installedCount = marketScripts.filter((script) => script.installed).length;
+  const updateCount = marketScripts.filter((script) => script.updateAvailable).length;
+  const enabledLocalCount = scripts.filter((script) => script.enabled).length;
+  const [scriptView, setScriptView] = useState<"market" | "local">("market");
+  const [scriptSearch, setScriptSearch] = useState("");
+  const [marketFilter, setMarketFilter] = useState<"all" | "available" | "installed" | "updates">("all");
+  const [localFilter, setLocalFilter] = useState<"all" | "enabled" | "disabled">("all");
+  const normalizedScriptSearch = scriptSearch.trim().toLocaleLowerCase();
+  const visibleMarketScripts = marketScripts.filter((script) => {
+    if (marketFilter === "available" && script.installed) return false;
+    if (marketFilter === "installed" && !script.installed) return false;
+    if (marketFilter === "updates" && !script.updateAvailable) return false;
+    if (!normalizedScriptSearch) return true;
+    return [script.name, script.description, script.author, script.tags.join(" ")].join(" ").toLocaleLowerCase().includes(normalizedScriptSearch);
+  });
+  const visibleLocalScripts = scripts.filter((script) => {
+    if (localFilter === "enabled" && !script.enabled) return false;
+    if (localFilter === "disabled" && script.enabled) return false;
+    if (!normalizedScriptSearch) return true;
+    return [script.name, script.key, script.source, script.status].join(" ").toLocaleLowerCase().includes(normalizedScriptSearch);
+  });
   return (
-    <>
-      <Panel>
-        <CardHead title={t("脚本市场")} detail={tf("{0} 个市场脚本，已安装 {1} 个，本地整体 {2}", [marketScripts.length, installedCount, inventory?.enabled === false ? t("关闭") : t("开启")])} />
+    <div className="deck-page script-deck-page">
+      <Panel className="script-control-panel">
+        <CardHead title={t("脚本市场")} detail={market?.market.message ?? t("尚未刷新")} />
         <CardContent>
-          <div className="metric-list">
-            <Metric label={t("市场状态")} value={market?.market.message ?? t("尚未刷新")} />
-            <Metric label={t("远程脚本")} value={tf("{0} 个", [marketScripts.length])} />
-            <Metric label={t("已安装")} value={tf("{0} 个", [installedCount])} />
-            <Metric label={t("本地整体")} value={inventory?.enabled === false ? t("关闭") : t("开启")} />
+          <div aria-label={t("脚本视图")} className="deck-tabs script-view-tabs" role="tablist">
+            <button aria-selected={scriptView === "market"} className={scriptView === "market" ? "active" : ""} onClick={() => setScriptView("market")} role="tab" type="button">
+              <Download className="h-4 w-4" />
+              <span><strong>{t("市场脚本")}</strong><small>{tf("{0} 个，可更新 {1} 个", [marketScripts.length, updateCount])}</small></span>
+            </button>
+            <button aria-selected={scriptView === "local"} className={scriptView === "local" ? "active" : ""} onClick={() => setScriptView("local")} role="tab" type="button">
+              <FileCode2 className="h-4 w-4" />
+              <span><strong>{t("本地脚本")}</strong><small>{tf("{0} 个，已启用 {1} 个", [scripts.length, enabledLocalCount])}</small></span>
+            </button>
           </div>
-          <Toolbar>
-            <Button onClick={() => void actions.refreshScriptMarket()}>
-              <RefreshCw className="h-4 w-4" />
-              {t("刷新市场")}
-            </Button>
-            <Button onClick={() => void actions.openExternalUrl(SCRIPT_MARKET_REPOSITORY_URL)} variant="secondary">
-              <ExternalLink className="h-4 w-4" />
-              {t("投稿")}
-            </Button>
-            <Button onClick={() => void actions.refreshCurrent()} variant="secondary">
-              <RefreshCw className="h-4 w-4" />
-              {t("刷新本地")}
-            </Button>
-          </Toolbar>
-        </CardContent>
-      </Panel>
-      <Panel>
-        <CardHead title={t("市场脚本")} detail={market?.market.updatedAt ? tf("清单更新时间：{0}", [market.market.updatedAt]) : t("从 GitHub 静态清单加载")} />
-        <CardContent>
-          {marketScripts.length ? (
-            <div className="script-market-grid">
-              {marketScripts.map((script) => (
-                <MarketScriptCard key={script.id} script={script} actions={actions} />
-              ))}
+          <div className="deck-list-toolbar script-list-toolbar">
+            <label className="deck-search-field">
+              <Search className="h-4 w-4" aria-hidden="true" />
+              <Input aria-label={t("搜索脚本")} onChange={(event) => setScriptSearch(event.currentTarget.value)} placeholder={t("搜索名称、作者或标签...")} type="search" value={scriptSearch} />
+            </label>
+            <label className="deck-toolbar-select">
+              <Filter className="h-4 w-4" aria-hidden="true" />
+              {scriptView === "market" ? (
+                <select aria-label={t("市场脚本筛选")} onChange={(event) => setMarketFilter(event.currentTarget.value as typeof marketFilter)} value={marketFilter}>
+                  <option value="all">{t("全部状态")}</option>
+                  <option value="available">{t("未安装")}</option>
+                  <option value="installed">{t("已安装")}</option>
+                  <option value="updates">{t("可更新")}</option>
+                </select>
+              ) : (
+                <select aria-label={t("本地脚本筛选")} onChange={(event) => setLocalFilter(event.currentTarget.value as typeof localFilter)} value={localFilter}>
+                  <option value="all">{t("全部状态")}</option>
+                  <option value="enabled">{t("已启用")}</option>
+                  <option value="disabled">{t("已禁用")}</option>
+                </select>
+              )}
+            </label>
+            <div className="deck-toolbar-actions">
+              <Button aria-label={scriptView === "market" ? t("刷新市场") : t("刷新本地")} onClick={() => void (scriptView === "market" ? actions.refreshScriptMarket() : actions.refreshCurrent())} size="icon" title={scriptView === "market" ? t("刷新市场") : t("刷新本地")} variant="outline"><RefreshCw className="h-4 w-4" /></Button>
+              <Button onClick={() => void actions.openExternalUrl(SCRIPT_MARKET_REPOSITORY_URL)} variant="secondary"><ExternalLink className="h-4 w-4" />{t("投稿")}</Button>
             </div>
-          ) : (
-            <div className="empty">{market?.status === "failed" ? market.message : t("点击刷新市场加载远程脚本。")}</div>
-          )}
-        </CardContent>
-      </Panel>
-      <Panel>
-        <CardHead title={t("本地脚本")} detail={t("内置、手动和市场安装脚本；可在这里启停或删除用户脚本")} />
-        <CardContent>
-          <div className="table">
-            {scripts.length ? scripts.map((script) => <ScriptRow key={script.key} script={script} actions={actions} />) : <div className="empty">{t("未发现用户脚本。")}</div>}
           </div>
         </CardContent>
       </Panel>
-    </>
+      <section className="script-workspace">
+        <div className="script-workspace-head">
+          <div>
+            <strong>{scriptView === "market" ? t("市场脚本") : t("本地脚本")}</strong>
+            <span>{scriptView === "market" ? (market?.market.updatedAt ? tf("清单更新时间：{0}", [market.market.updatedAt]) : t("从 GitHub 静态清单加载")) : t("内置、手动和市场安装脚本")}</span>
+          </div>
+          <span>{scriptView === "market" ? tf("显示 {0} / {1}", [visibleMarketScripts.length, marketScripts.length]) : tf("显示 {0} / {1}", [visibleLocalScripts.length, scripts.length])}</span>
+        </div>
+        {scriptView === "market" ? (
+          visibleMarketScripts.length ? <div className="script-market-grid script-market-scroll">{visibleMarketScripts.map((script) => <MarketScriptCard key={script.id} script={script} actions={actions} />)}</div> : <div className="deck-empty-state"><Search className="h-5 w-5" /><strong>{t("没有匹配的市场脚本")}</strong><span>{market?.status === "failed" ? market.message : t("调整搜索词或筛选条件。")}</span></div>
+        ) : (
+          <div className="script-local-table">
+            <div className="script-local-table-head"><span>{t("名称")}</span><span>{t("来源")}</span><span>{t("状态")}</span><span>{t("运行状态")}</span><span>{t("操作")}</span></div>
+            <div className="script-local-table-body">{visibleLocalScripts.length ? visibleLocalScripts.map((script) => <ScriptRow key={script.key} script={script} actions={actions} />) : <div className="deck-empty-state"><FileCode2 className="h-5 w-5" /><strong>{t("没有匹配的本地脚本")}</strong><span>{t("调整搜索词或筛选条件。")}</span></div>}</div>
+          </div>
+        )}
+      </section>
+      <div className="deck-save-bar script-status-bar">
+        <div><span className={inventory?.enabled === false ? "" : "ready"} aria-hidden="true" /><div><strong>{inventory?.enabled === false ? t("本地脚本整体已关闭") : t("本地脚本整体已启用")}</strong><small>{tf("已安装 {0} 个市场脚本", [installedCount])}</small></div></div>
+        <Button onClick={() => void actions.refreshScriptMarket()} variant="secondary"><RefreshCw className="h-4 w-4" />{t("刷新全部")}</Button>
+      </div>
+    </div>
   );
 }
 
@@ -3154,12 +3511,67 @@ function SessionsScreen({
   const items = sessions?.sessions ?? [];
   const activeCount = items.filter((item) => !item.archived).length;
   const archivedCount = items.length - activeCount;
+  const [sessionSearch, setSessionSearch] = useState("");
+  const [sessionFilter, setSessionFilter] = useState<SessionListFilter>("all");
+  const [sessionSort, setSessionSort] = useState<SessionListSort>("newest");
+  const [sessionPage, setSessionPage] = useState(1);
+  const [sessionPageSize, setSessionPageSize] = useState(10);
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(() => new Set());
-  const [selectionMode, setSelectionMode] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const selectCurrentPageRef = useRef<HTMLInputElement>(null);
+  const searchQuery = sessionSearch.trim().toLowerCase();
+  const filteredSessions = useMemo(() => {
+    const filtered = items.filter((session) => {
+      const matchesFilter =
+        sessionFilter === "all" ||
+        (sessionFilter === "active" && !session.archived) ||
+        (sessionFilter === "archived" && session.archived);
+      if (!matchesFilter) return false;
+      if (!searchQuery) return true;
+      return [session.title, session.id, session.cwd, session.modelProvider]
+        .some((value) => value.toLowerCase().includes(searchQuery));
+    });
+    return filtered.sort((left, right) => {
+      if (left.updatedAtMs === right.updatedAtMs) return left.id.localeCompare(right.id);
+      if (left.updatedAtMs === null) return 1;
+      if (right.updatedAtMs === null) return -1;
+      return sessionSort === "newest"
+        ? right.updatedAtMs - left.updatedAtMs
+        : left.updatedAtMs - right.updatedAtMs;
+    });
+  }, [items, searchQuery, sessionFilter, sessionSort]);
+  const pageCount = Math.max(1, Math.ceil(filteredSessions.length / sessionPageSize));
+  const currentPage = Math.min(sessionPage, pageCount);
+  const pageStartIndex = (currentPage - 1) * sessionPageSize;
+  const visibleSessions = filteredSessions.slice(pageStartIndex, pageStartIndex + sessionPageSize);
+  const pageStart = filteredSessions.length ? pageStartIndex + 1 : 0;
+  const pageEnd = Math.min(pageStartIndex + sessionPageSize, filteredSessions.length);
   const selectedSessions = useMemo(() => items.filter((session) => selectedSessionIds.has(session.id)), [items, selectedSessionIds]);
   const selectedCount = selectedSessions.length;
-  const allSelected = items.length > 0 && selectedCount === items.length;
+  const selectedOnPageCount = visibleSessions.filter((session) => selectedSessionIds.has(session.id)).length;
+  const allCurrentPageSelected = visibleSessions.length > 0 && selectedOnPageCount === visibleSessions.length;
+  const allFilteredSelected = filteredSessions.length > 0 && filteredSessions.every((session) => selectedSessionIds.has(session.id));
+  const databaseState = !sessions ? "waiting" : isSuccessStatus(sessions.status) ? "ok" : "failed";
+  const databaseStatus =
+    databaseState === "ok"
+      ? t("会话库正常")
+      : databaseState === "failed"
+        ? t("会话库读取失败")
+        : t("等待读取会话库");
+  const databasePath = sessions?.dbPath || sessions?.dbPaths?.[0] || "~/.codex/sqlite/*.db";
+  const paginationItems = useMemo<Array<number | string>>(() => {
+    if (pageCount <= 5) return Array.from({ length: pageCount }, (_, index) => index + 1);
+    const pages = Array.from(new Set([1, pageCount, currentPage - 1, currentPage, currentPage + 1]))
+      .filter((page) => page >= 1 && page <= pageCount)
+      .sort((left, right) => left - right);
+    const result: Array<number | string> = [];
+    pages.forEach((page, index) => {
+      const previous = pages[index - 1];
+      if (previous && page - previous > 1) result.push(`ellipsis-${previous}`);
+      result.push(page);
+    });
+    return result;
+  }, [currentPage, pageCount]);
 
   useEffect(() => {
     const itemIds = new Set(items.map((session) => session.id));
@@ -3168,6 +3580,16 @@ function SessionsScreen({
       return next.size === current.size ? current : next;
     });
   }, [items]);
+
+  useEffect(() => {
+    setSessionPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
+
+  useEffect(() => {
+    if (selectCurrentPageRef.current) {
+      selectCurrentPageRef.current.indeterminate = selectedOnPageCount > 0 && !allCurrentPageSelected;
+    }
+  }, [allCurrentPageSelected, selectedOnPageCount]);
 
   const toggleSessionSelection = (sessionId: string, checked: boolean) => {
     setSelectedSessionIds((current) => {
@@ -3181,18 +3603,24 @@ function SessionsScreen({
     });
   };
 
-  const selectAllSessions = () => {
-    setSelectionMode(true);
-    setSelectedSessionIds(new Set(items.map((session) => session.id)));
+  const toggleCurrentPageSelection = () => {
+    setSelectedSessionIds((current) => {
+      const next = new Set(current);
+      visibleSessions.forEach((session) => {
+        if (allCurrentPageSelected) {
+          next.delete(session.id);
+        } else {
+          next.add(session.id);
+        }
+      });
+      return next;
+    });
   };
 
+  const selectAllFilteredSessions = () => setSelectedSessionIds(new Set(filteredSessions.map((session) => session.id)));
   const clearSelectedSessions = () => setSelectedSessionIds(new Set());
 
   const deleteSelectedSessions = async () => {
-    if (!selectionMode) {
-      setSelectionMode(true);
-      return;
-    }
     setBulkDeleting(true);
     try {
       await actions.deleteLocalSessions(selectedSessions);
@@ -3201,24 +3629,61 @@ function SessionsScreen({
     }
   };
 
+  const changeProviderSyncTarget = (provider: string) => {
+    const next = { ...form, providerSyncLastSelectedProvider: provider };
+    actions.setProviderSyncTarget(provider);
+    onFormChange(next);
+    void actions.saveSettingsValue(next, true);
+  };
+
+  const changeAutoRepair = (checked: boolean) => {
+    const next = { ...form, providerSyncEnabled: checked };
+    onFormChange(next);
+    void actions.saveSettingsValue(next, true);
+  };
+
+  const changeSessionFilter = (next: SessionListFilter) => {
+    setSessionFilter(next);
+    setSessionPage(1);
+  };
+
   return (
     <>
-      <Panel>
-        <CardHead title={t("会话管理")} detail={t("读取 Codex 本地 SQLite 会话库，会删除数据库记录和对应 rollout 文件")} />
-        <CardContent>
-          <div className="metric-list">
-            <Metric label={t("会话总数")} value={tf("{0} 个", [items.length])} />
-            <Metric label={t("未归档")} value={tf("{0} 个", [activeCount])} />
-            <Metric label={t("已归档")} value={tf("{0} 个", [archivedCount])} />
-            <Metric label={t("数据库")} value={sessions?.dbPath ?? "~/.codex/sqlite/*.db"} />
-          </div>
-          <div className="form-row">
-            <Field label={t("同步目标")}>
+      <Panel className="session-control-panel">
+        <CardContent className="session-control-content">
+          <div className="session-cockpit-toolbar">
+            <label className="session-search-field">
+              <Search aria-hidden="true" className="h-4 w-4" />
+              <Input
+                aria-label={t("搜索会话")}
+                onChange={(event) => {
+                  setSessionSearch(event.currentTarget.value);
+                  setSessionPage(1);
+                }}
+                placeholder={t("搜索标题、项目路径、会话 ID 或 Provider...")}
+                type="search"
+                value={sessionSearch}
+              />
+            </label>
+            <div aria-label={t("会话状态筛选")} className="session-filter-group" role="group">
+              <Button onClick={() => changeSessionFilter("all")} size="sm" variant={sessionFilter === "all" ? "secondary" : "ghost"}>
+                {tf("全部 ({0})", [items.length])}
+              </Button>
+              <Button onClick={() => changeSessionFilter("active")} size="sm" variant={sessionFilter === "active" ? "secondary" : "ghost"}>
+                {tf("未归档 ({0})", [activeCount])}
+              </Button>
+              <Button onClick={() => changeSessionFilter("archived")} size="sm" variant={sessionFilter === "archived" ? "secondary" : "ghost"}>
+                {tf("已归档 ({0})", [archivedCount])}
+              </Button>
+            </div>
+            <label className="session-toolbar-select-wrap session-sync-target" title={t("同步目标")}>
+              <Link2 aria-hidden="true" className="h-4 w-4" />
               <select
-                className="select-input"
+                aria-label={t("同步目标")}
+                className="session-toolbar-select"
                 disabled={providerSyncProgress.active || !(providerSyncTargets?.targets ?? []).length}
+                onChange={(event) => changeProviderSyncTarget(event.currentTarget.value)}
                 value={selectedProviderSyncTarget}
-                onChange={(event) => actions.setProviderSyncTarget(event.currentTarget.value)}
               >
                 {(providerSyncTargets?.targets ?? []).map((target) => (
                   <option key={target.id} value={target.id}>
@@ -3227,111 +3692,216 @@ function SessionsScreen({
                 ))}
                 {!(providerSyncTargets?.targets ?? []).length ? <option value="">{t("当前配置 provider")}</option> : null}
               </select>
-            </Field>
-          </div>
-          <Toolbar>
-            <Button onClick={() => void actions.refreshLocalSessions()}>
-              <RefreshCw className="h-4 w-4" />
-              {t("刷新会话")}
-            </Button>
-            <Button disabled={providerSyncProgress.active} onClick={() => void actions.syncProvidersNow()} variant="outline">
-              <RefreshCw className="h-4 w-4" />
-              {providerSyncProgress.active ? t("正在修复…") : t("立刻修复历史会话")}
-            </Button>
-          </Toolbar>
-          <div className="provider-sync-progress" data-active={providerSyncProgress.active}>
-            <div className="provider-sync-progress-head">
-              <strong>{providerSyncProgress.active ? t("正在修复历史会话") : t("历史会话修复进度")}</strong>
-              <span>{providerSyncProgress.percent}%</span>
+            </label>
+            <label className="session-toolbar-select-wrap session-sort-target" title={t("排序方式")}>
+              <ArrowDownWideNarrow aria-hidden="true" className="h-4 w-4" />
+              <select
+                aria-label={t("排序方式")}
+                className="session-toolbar-select"
+                onChange={(event) => {
+                  setSessionSort(event.currentTarget.value as SessionListSort);
+                  setSessionPage(1);
+                }}
+                value={sessionSort}
+              >
+                <option value="newest">{t("最近更新")}</option>
+                <option value="oldest">{t("最早更新")}</option>
+              </select>
+            </label>
+            <div className="session-toolbar-actions">
+              <Button aria-label={t("刷新会话")} onClick={() => void actions.refreshLocalSessions()} size="icon" title={t("刷新会话")} variant="outline">
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+              <Button disabled={providerSyncProgress.active} onClick={() => void actions.syncProvidersNow()}>
+                <Wrench className="h-4 w-4" />
+                {providerSyncProgress.active ? t("正在修复…") : t("修复历史会话")}
+              </Button>
             </div>
-            <div
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={providerSyncProgress.percent}
-              className="provider-sync-progress-bar"
-              role="progressbar"
-            >
-              <div className="provider-sync-progress-fill" style={{ width: `${providerSyncProgress.percent}%` }} />
+          </div>
+          <div className="session-control-meta">
+            <div className="session-database-status" data-status={databaseState}>
+              <Database aria-hidden="true" className="h-4 w-4" />
+              <span>{t("数据库")}</span>
+              <code title={databasePath}>{databasePath}</code>
+              <span className="session-database-health">
+                <i aria-hidden="true" />
+                {databaseStatus}
+              </span>
             </div>
-            <small>{providerSyncProgress.message}</small>
+            <label className="session-auto-repair">
+              <input
+                checked={form.providerSyncEnabled}
+                onChange={(event) => changeAutoRepair(event.currentTarget.checked)}
+                type="checkbox"
+              />
+              <span>{t("启动前自动修复")}</span>
+            </label>
           </div>
-          <div className="hint-line">
-            <Info className="h-4 w-4" />
-            <span>{t("删除会创建本地备份；如果 Codex App 正在使用该会话，建议先关闭对应会话窗口再操作。")}</span>
-          </div>
-          <label className="switch-row">
-            <input
-              checked={form.providerSyncEnabled}
-              onChange={(event) => onFormChange({ ...form, providerSyncEnabled: event.currentTarget.checked })}
-              type="checkbox"
-            />
-            <span>
-              <strong>{t("启动前自动修复历史会话")}</strong>
-              <small>{t("开启后，通过 Codex Deck 启动 Codex 前自动整理一次旧对话的归属标记。")}</small>
-            </span>
-          </label>
-          <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存自动修复设置")}</Button>
-          </Toolbar>
+          {providerSyncProgress.active ? (
+            <div className="provider-sync-progress session-repair-progress" data-active="true">
+              <div className="provider-sync-progress-head">
+                <strong>{t("正在修复历史会话")}</strong>
+                <span>{providerSyncProgress.percent}%</span>
+              </div>
+              <div
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={providerSyncProgress.percent}
+                className="provider-sync-progress-bar"
+                role="progressbar"
+              >
+                <div className="provider-sync-progress-fill" style={{ width: `${providerSyncProgress.percent}%` }} />
+              </div>
+              <small>{providerSyncProgress.message}</small>
+            </div>
+          ) : null}
         </CardContent>
       </Panel>
-      <Panel>
-        <CardHead title={t("本地会话")} detail={items.length ? t("按更新时间倒序显示") : t("点击刷新会话读取本地数据库")} />
-        <CardContent>
-          {items.length ? (
-            <>
-              <div className="session-list-toolbar">
-                <span className="session-selection-summary">{t("已选择")} {selectedCount} / {items.length} {t("个会话")}</span>
-                <div className="session-selection-actions">
-                  <Button disabled={allSelected || bulkDeleting} onClick={selectAllSessions} size="sm" variant="outline">
-                    {t("全选当前列表")}
-                  </Button>
-                  <Button disabled={!selectedCount || bulkDeleting} onClick={clearSelectedSessions} size="sm" variant="outline">
-                    {t("清空选择")}
-                  </Button>
-                  <Button disabled={(selectionMode && !selectedCount) || bulkDeleting} onClick={() => void deleteSelectedSessions()} size="sm" variant="outline">
-                    {selectionMode ? <Trash2 className="h-4 w-4" /> : null}
-                    {selectionMode ? (bulkDeleting ? t("正在删除…") : t("删除已选")) : t("多选")}
-                  </Button>
+      <Panel className="session-table-panel">
+        <CardHeader className="session-table-head">
+          <div className="session-table-title">
+            <CardTitle>{t("本地会话")}</CardTitle>
+            <CardDescription>
+              {tf("{0} 个会话", [filteredSessions.length])} · {sessionSort === "newest" ? t("按更新时间倒序显示") : t("按更新时间正序显示")}
+            </CardDescription>
+          </div>
+          <div className="session-selection-toolbar">
+            <span>{tf("已选择 {0} 个会话", [selectedCount])}</span>
+            <Button disabled={!filteredSessions.length || allFilteredSelected || bulkDeleting} onClick={selectAllFilteredSessions} size="sm" variant="ghost">
+              {tf("全选筛选结果 ({0})", [filteredSessions.length])}
+            </Button>
+            <Button disabled={!selectedCount || bulkDeleting} onClick={clearSelectedSessions} size="sm" variant="ghost">
+              {t("清空选择")}
+            </Button>
+            <Button className="session-bulk-delete" disabled={!selectedCount || bulkDeleting} onClick={() => void deleteSelectedSessions()} size="sm" variant="outline">
+              <Trash2 className="h-4 w-4" />
+              {bulkDeleting ? t("正在删除…") : t("删除已选")}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="session-table-content">
+          <div aria-label={t("本地会话")} className="session-table" role="table">
+            <div className="session-table-row session-table-header" role="row">
+              <div className="session-checkbox-cell" role="columnheader">
+                <input
+                  aria-label={t("选择当前页")}
+                  checked={allCurrentPageSelected}
+                  disabled={!visibleSessions.length}
+                  onChange={toggleCurrentPageSelection}
+                  ref={selectCurrentPageRef}
+                  type="checkbox"
+                />
+              </div>
+              <div role="columnheader">{t("会话")}</div>
+              <div role="columnheader">Provider</div>
+              <div role="columnheader">{t("状态")}</div>
+              <div role="columnheader">{t("更新时间")}</div>
+              <div aria-label={t("操作")} role="columnheader" />
+            </div>
+            {visibleSessions.map((session) => {
+              const selected = selectedSessionIds.has(session.id);
+              const provider = session.modelProvider || t("provider 未记录");
+              const providerMark = Array.from(session.modelProvider.trim()).slice(0, 2).join("").toUpperCase() || "--";
+              return (
+                <div className="session-table-row" data-selected={selected} key={session.id} role="row">
+                  <label className="session-checkbox-cell" title={t("选择会话")}>
+                    <input
+                      aria-label={tf("选择会话 {0}", [session.title || session.id])}
+                      checked={selected}
+                      onChange={(event) => toggleSessionSelection(session.id, event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                  </label>
+                  <div className="session-main-cell" role="cell">
+                    <strong title={session.title || t("未命名会话")}>{session.title || t("未命名会话")}</strong>
+                    <span title={`${session.cwd || t("未记录项目路径")} · ${session.id}`}>
+                      {session.cwd || t("未记录项目路径")} · {session.id}
+                    </span>
+                  </div>
+                  <div className="session-provider-cell" role="cell" title={provider}>
+                    <span className="session-provider-mark">{providerMark}</span>
+                    <span>{provider}</span>
+                  </div>
+                  <div className="session-status-cell" role="cell">
+                    <UiBadge className={session.archived ? "session-status archived" : "session-status active"} variant="secondary">
+                      {session.archived ? t("已归档") : t("未归档")}
+                    </UiBadge>
+                  </div>
+                  <div className="session-time-cell" role="cell">
+                    {session.updatedAtMs === null ? t("更新时间未知") : formatTime(session.updatedAtMs)}
+                  </div>
+                  <div className="session-action-cell" role="cell">
+                    <Button
+                      aria-label={tf("删除会话 {0}", [session.title || session.id])}
+                      className="session-delete-button"
+                      onClick={() => void actions.deleteLocalSession(session)}
+                      size="icon"
+                      title={t("删除会话")}
+                      variant="ghost"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
+              );
+            })}
+            {!visibleSessions.length ? (
+              <div className="session-table-empty">
+                {items.length ? t("没有匹配的会话") : t("未读取到本地会话，或当前 SQLite 会话库不存在。")}
               </div>
-              <div className="session-list">
-                {items.map((session) => {
-                  const selected = selectedSessionIds.has(session.id);
-                  return (
-                    <div className="session-row" data-selection-mode={selectionMode} data-selected={selected} key={session.id}>
-                      {selectionMode ? (
-                        <label className="session-select" title={t("选择会话")}>
-                          <input
-                            aria-label={tf("选择会话 {0}", [session.title || session.id])}
-                            checked={selected}
-                            onChange={(event) => toggleSessionSelection(session.id, event.currentTarget.checked)}
-                            type="checkbox"
-                          />
-                        </label>
-                      ) : null}
-                      <div className="session-main">
-                        <strong>{session.title || t("未命名会话")}</strong>
-                        <span>{session.id}</span>
-                        <small>{session.cwd || t("未记录项目路径")}</small>
-                      </div>
-                      <div className="session-meta">
-                        <Badge status={session.archived ? "archived" : "ok"} />
-                        <span>{session.modelProvider || t("provider 未记录")}</span>
-                        <span>{formatTime(session.updatedAtMs ?? 0)}</span>
-                      </div>
-                      <Button className="session-delete-button" variant="outline" onClick={() => void actions.deleteLocalSession(session)}>
-                        <Trash2 className="h-4 w-4" />
-                        {t("删除")}
-                      </Button>
-                    </div>
-                  );
-                })}
+            ) : null}
+          </div>
+          <div className="session-table-note">
+            <Info aria-hidden="true" className="h-4 w-4" />
+            <span>{t("删除会创建本地备份；如果 Codex App 正在使用该会话，建议先关闭对应会话窗口再操作。")}</span>
+          </div>
+          <div className="session-pagination">
+            <div className="session-pagination-summary">
+              <span>{tf("第 {0}-{1} 条，共 {2} 条", [pageStart, pageEnd, filteredSessions.length])}</span>
+              <label>
+                <span>{t("每页")}</span>
+                <select
+                  aria-label={t("每页条数")}
+                  onChange={(event) => {
+                    setSessionPageSize(Number(event.currentTarget.value));
+                    setSessionPage(1);
+                  }}
+                  value={sessionPageSize}
+                >
+                  {[10, 20, 50].map((size) => <option key={size} value={size}>{size} {t("条/页")}</option>)}
+                </select>
+              </label>
+            </div>
+            <nav aria-label={t("会话分页")} className="session-page-controls">
+              <Button aria-label={t("首页")} disabled={currentPage === 1} onClick={() => setSessionPage(1)} size="icon" title={t("首页")} variant="ghost">
+                <ChevronsLeft className="h-4 w-4" />
+              </Button>
+              <Button aria-label={t("上一页")} disabled={currentPage === 1} onClick={() => setSessionPage((page) => Math.max(1, page - 1))} size="icon" title={t("上一页")} variant="ghost">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="session-page-numbers">
+                {paginationItems.map((item) => typeof item === "number" ? (
+                  <Button
+                    aria-current={item === currentPage ? "page" : undefined}
+                    className="session-page-number"
+                    key={item}
+                    onClick={() => setSessionPage(item)}
+                    size="icon"
+                    variant={item === currentPage ? "secondary" : "ghost"}
+                  >
+                    {item}
+                  </Button>
+                ) : <span aria-hidden="true" key={item}>…</span>)}
               </div>
-            </>
-          ) : (
-            <div className="empty">{t("未读取到本地会话，或当前 SQLite 会话库不存在。")}</div>
-          )}
+              <span className="session-page-position">{tf("第 {0} / {1} 页", [currentPage, pageCount])}</span>
+              <Button aria-label={t("下一页")} disabled={currentPage === pageCount} onClick={() => setSessionPage((page) => Math.min(pageCount, page + 1))} size="icon" title={t("下一页")} variant="ghost">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button aria-label={t("末页")} disabled={currentPage === pageCount} onClick={() => setSessionPage(pageCount)} size="icon" title={t("末页")} variant="ghost">
+                <ChevronsRight className="h-4 w-4" />
+              </Button>
+            </nav>
+          </div>
         </CardContent>
       </Panel>
     </>
@@ -3358,8 +3928,35 @@ function MaintenanceScreen({
   actions: Actions;
 }) {
   const savedCodexAppPath = settings?.settings.codexAppPath ?? "";
+  const [maintenanceSection, setMaintenanceSection] = useState<"health" | "entrypoints" | "watcher" | "application" | "launch">("health");
+  const maintenanceSections: Array<DeckSectionOption<typeof maintenanceSection>> = [
+    { id: "health", label: t("检查与修复"), detail: t("应用、入口和接管状态"), icon: Stethoscope },
+    { id: "entrypoints", label: t("入口管理"), detail: t("安装、修复与卸载"), icon: Link2 },
+    { id: "watcher", label: t("自动接管"), detail: t("Watcher 生命周期"), icon: ShieldCheck },
+    { id: "application", label: t("Codex 应用路径"), detail: t("识别和保存应用位置"), icon: AppWindow },
+    { id: "launch", label: t("手动启动"), detail: t("路径覆盖与调试端口"), icon: Play },
+  ];
+  const maintenanceStates = [
+    overview?.codex_app.status === "found",
+    overview?.silent_shortcut.status === "installed",
+    overview?.management_shortcut.status === "installed",
+    watcher?.enabled === true,
+  ];
+  const readyMaintenanceCount = maintenanceStates.filter(Boolean).length;
   return (
-    <>
+    <div className="deck-page deck-settings-page maintenance-deck-page">
+      <section className={`maintenance-status-band ${readyMaintenanceCount === maintenanceStates.length ? "ready" : "attention"}`}>
+        <span className="maintenance-status-icon"><Stethoscope className="h-5 w-5" /></span>
+        <div>
+          <strong>{readyMaintenanceCount === maintenanceStates.length ? t("安装与接管状态正常") : t("存在需要维护的项目")}</strong>
+          <small>{tf("{0} / {1} 项检查通过", [readyMaintenanceCount, maintenanceStates.length])}</small>
+        </div>
+        <Button onClick={() => void actions.checkHealth()} variant="outline"><RefreshCw className="h-4 w-4" />{t("重新检查")}</Button>
+      </section>
+      <div className="deck-settings-layout">
+        <DeckSectionNav active={maintenanceSection} label={t("安装维护分类")} onChange={setMaintenanceSection} options={maintenanceSections} />
+        <div className="maintenance-workspace">
+      {maintenanceSection === "health" ? (
       <Panel>
         <CardHead title={t("检查与修复")} detail={t("检查入口、Codex 应用和 Watcher 状态")} />
         <CardContent>
@@ -3375,6 +3972,8 @@ function MaintenanceScreen({
           </Toolbar>
         </CardContent>
       </Panel>
+      ) : null}
+      {maintenanceSection === "entrypoints" ? (
       <Panel>
         <CardHead title={t("入口管理")} detail={t("快捷方式写入系统实际桌面位置，不使用写死桌面路径")} />
         <CardContent>
@@ -3384,11 +3983,16 @@ function MaintenanceScreen({
           </label>
           <Toolbar>
             <Button onClick={() => void actions.installEntrypoints()}>{t("安装入口")}</Button>
-            <Button variant="secondary" onClick={() => void actions.uninstallEntrypoints()}>{t("卸载入口")}</Button>
             <Button variant="secondary" onClick={() => void actions.repairShortcuts()}>{t("修复入口")}</Button>
           </Toolbar>
+          <div className="maintenance-danger-zone">
+            <div><strong>{t("危险操作")}</strong><small>{t("卸载入口可能同时移除 Codex Deck 托管数据，请先确认上方选项。")}</small></div>
+            <Button variant="outline" onClick={() => void actions.uninstallEntrypoints()}><Trash2 className="h-4 w-4" />{t("卸载入口")}</Button>
+          </div>
         </CardContent>
       </Panel>
+      ) : null}
+      {maintenanceSection === "watcher" ? (
       <Panel>
         <CardHead title={t("自动接管")} detail={t("Watcher 用于保持 Codex Deck 接管状态")} />
         <CardContent>
@@ -3400,6 +4004,8 @@ function MaintenanceScreen({
           </Toolbar>
         </CardContent>
       </Panel>
+      ) : null}
+      {maintenanceSection === "application" ? (
       <Panel>
         <CardHead title={t("Codex 应用路径")} detail={t("免安装版或解包版只需要选择一次，之后静默启动会自动复用")} />
         <CardContent>
@@ -3421,6 +4027,8 @@ function MaintenanceScreen({
           </Toolbar>
         </CardContent>
       </Panel>
+      ) : null}
+      {maintenanceSection === "launch" ? (
       <Panel>
         <CardHead title={t("手动启动")} detail={t("应用路径留空时使用已保存路径；没有保存路径时使用自动探测")} />
         <CardContent>
@@ -3453,7 +4061,14 @@ function MaintenanceScreen({
           </Toolbar>
         </CardContent>
       </Panel>
-    </>
+      ) : null}
+        </div>
+      </div>
+      <div className="deck-save-bar maintenance-footer-bar">
+        <div><span className={overview?.codex_app.status === "found" ? "ready" : ""} aria-hidden="true" /><div><strong>{t("当前 Codex 应用")}</strong><small>{overview?.codex_app.path || savedCodexAppPath || t("尚未识别应用路径")}</small></div></div>
+        <Button onClick={() => void actions.launch()}><Rocket className="h-4 w-4" />{t("启动 Codex")}</Button>
+      </div>
+    </div>
   );
 }
 
@@ -3472,8 +4087,39 @@ function AboutScreen({
   diagnostics: DiagnosticsResult | null;
   actions: Actions;
 }) {
+  const [aboutView, setAboutView] = useState<"overview" | "updates" | "logs" | "diagnostics">("overview");
+  const aboutViews = [
+    { id: "overview" as const, label: t("产品信息"), icon: Info },
+    { id: "updates" as const, label: t("版本更新"), icon: CircleArrowUp },
+    { id: "logs" as const, label: t("最近日志"), icon: FileCode2 },
+    { id: "diagnostics" as const, label: t("诊断报告"), icon: Stethoscope },
+  ];
   return (
-    <>
+    <div className="deck-page about-deck-page">
+      <section className="about-brand-band">
+        <img alt="Codex Deck" src={codexDeckLogo} />
+        <div className="about-brand-copy">
+          <span>{t("Codex 管理控制台")}</span>
+          <h2>Codex Deck</h2>
+          <p>{t("本地 Codex 增强、供应商管理和运行维护工具")}</p>
+        </div>
+        <div className="about-version-block">
+          <small>{t("当前版本")}</small>
+          <strong>{overview?.current_version ?? update?.currentVersion ?? "-"}</strong>
+          <Badge status={update?.updateAvailable ? "missing" : "ok"} />
+        </div>
+        <div className="about-brand-actions">
+          <Button onClick={() => void actions.openExternalUrl("https://github.com/nanzheyin/-codexplus")} variant="secondary"><ExternalLink className="h-4 w-4" />GitHub</Button>
+          <Button onClick={() => void actions.openExternalUrl("https://github.com/nanzheyin/-codexplus/issues")} variant="outline"><MessageCircle className="h-4 w-4" />{t("反馈问题")}</Button>
+        </div>
+      </section>
+      <nav aria-label={t("关于页面视图")} className="deck-tabs about-view-tabs">
+        {aboutViews.map((view) => {
+          const Icon = view.icon;
+          return <button aria-current={aboutView === view.id ? "page" : undefined} className={aboutView === view.id ? "active" : ""} key={view.id} onClick={() => setAboutView(view.id)} type="button"><Icon className="h-4 w-4" /><span><strong>{view.label}</strong></span></button>;
+        })}
+      </nav>
+      {aboutView === "overview" ? (
       <Panel>
         <CardHead title={t("关于 Codex Deck")} detail={t("本地 Codex 增强、管理工具和安装包维护")} />
         <CardContent>
@@ -3503,6 +4149,8 @@ function AboutScreen({
           </Toolbar>
         </CardContent>
       </Panel>
+      ) : null}
+      {aboutView === "updates" ? (
       <Panel>
         <CardHead title={t("GitHub Release 更新")} detail={tf("当前版本 {0}", [overview?.current_version ?? update?.currentVersion ?? "-"])} />
         <CardContent>
@@ -3522,11 +4170,21 @@ function AboutScreen({
           </Toolbar>
         </CardContent>
       </Panel>
-      <LogsPanel logs={logs} actions={actions} />
-      <DiagnosticsPanel diagnostics={diagnostics} actions={actions} />
-    </>
+      ) : null}
+      {aboutView === "logs" ? <LogsPanel logs={logs} actions={actions} /> : null}
+      {aboutView === "diagnostics" ? <DiagnosticsPanel diagnostics={diagnostics} actions={actions} /> : null}
+      <div className="about-community-bar">
+        <span>{t("第三方非官方 Codex 管理工具，与 OpenAI 无隶属或背书关系。")}</span>
+        <div>
+          <Button onClick={() => void actions.openExternalUrl("https://discord.gg/y96kX7A76v")} size="sm" variant="ghost"><MessageCircle className="h-4 w-4" />Discord</Button>
+          <Button onClick={() => void actions.openExternalUrl("https://t.me/CodexPlusPlus")} size="sm" variant="ghost"><MessageCircle className="h-4 w-4" />Telegram</Button>
+        </div>
+      </div>
+    </div>
   );
 }
+
+type SettingsSection = "general" | "vision" | "stepwise" | "appearance" | "launch";
 
 function SettingsScreen({
   settings,
@@ -3541,11 +4199,30 @@ function SettingsScreen({
   onFormChange: (value: BackendSettings) => void;
   actions: Actions;
 }) {
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const settingsSections: Array<DeckSectionOption<SettingsSection>> = [
+    { id: "general", label: t("基础设置"), detail: t("主题与测试模型"), icon: Settings },
+    { id: "vision", label: t("视觉模型中转（VL）"), detail: t("图片理解与降级处理"), icon: AppWindow },
+    { id: "stepwise", label: "Stepwise", detail: t("建议生成服务配置"), icon: Workflow },
+    { id: "appearance", label: t("背景外观"), detail: t("覆盖图片与透明度"), icon: LayoutGrid },
+    { id: "launch", label: t("启动参数"), detail: t("Codex App 额外参数"), icon: Rocket },
+  ];
+  const activeSettingsSection = settingsSections.find((section) => section.id === settingsSection) ?? settingsSections[0];
+  const normalizedPersistedSettings = settings ? normalizeSettings(settings.settings) : null;
+  const settingsDirty = normalizedPersistedSettings ? JSON.stringify(form) !== JSON.stringify(normalizedPersistedSettings) : false;
   return (
-    <>
-      <Panel>
-        <CardHead title={t("基础设置")} detail={settings?.settings_path ?? ""} />
-        <CardContent>
+    <div className="deck-page deck-settings-page settings-deck-page" data-active-section={settingsSection}>
+      <section className="settings-file-status">
+        <span className="settings-file-status-icon"><Settings className="h-5 w-5" /></span>
+        <div><strong>{t("Codex Deck 设置")}</strong><small title={settings?.settings_path}>{settings?.settings_path || t("等待读取设置文件")}</small></div>
+        <Badge status={settingsDirty ? "missing" : "ok"} />
+      </section>
+      <div className="deck-settings-layout">
+        <DeckSectionNav active={settingsSection} label={t("设置分类")} onChange={setSettingsSection} options={settingsSections} />
+        <div className="settings-page-workspace">
+      <Panel className="settings-primary-panel">
+        <CardHead title={activeSettingsSection.label} detail={activeSettingsSection.detail} />
+        <CardContent className="settings-primary-content">
           <div className="basic-settings-list">
             <div className="theme-row">
               <div>
@@ -3646,9 +4323,6 @@ function SettingsScreen({
                 value={form.visionRelay.contextWindow || ""}
               />
             </Field>
-            <div className="form-actions">
-              <Button onClick={() => void actions.saveSettingsValue(form, false)}>{t("保存")}</Button>
-            </div>
           </div>
           <div className="settings-block stepwise-settings-block">
             <div className="section-title">Stepwise</div>
@@ -3732,10 +4406,9 @@ function SettingsScreen({
             </details>
             <div className="toolbar stepwise-settings-actions">
               <Button variant="secondary" onClick={() => void actions.testStepwiseSettings(form)}>{t("测试连接")}</Button>
-              <Button onClick={() => void actions.saveSettings()}>{t("保存设置")}</Button>
             </div>
           </div>
-          <div className="settings-block">
+          <div className="settings-block image-overlay-settings-block">
             <label className="check-row">
               <input
                 checked={form.codexAppImageOverlayEnabled}
@@ -3793,15 +4466,14 @@ function SettingsScreen({
               </select>
             </Field>
           </div>
-          <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存设置")}</Button>
+          <div className="toolbar settings-appearance-actions">
             <Button variant="secondary" onClick={() => void actions.resetImageOverlaySettings()}>
               {t("重置背景")}
             </Button>
-          </Toolbar>
+          </div>
         </CardContent>
       </Panel>
-      <Panel>
+      <Panel className="settings-launch-panel">
         <CardHead title={t("Codex 启动参数")} detail={t("启动 Codex App 时追加到默认 CDP 参数后。留空则保持默认启动行为。")} />
         <CardContent>
           <Field label={t("额外参数")}>
@@ -3819,12 +4491,18 @@ function SettingsScreen({
             />
           </Field>
           <p className="field-hint">{t("每行一个参数，例如 --force_high_performance_gpu。不需要填写 open 或 --args。")}</p>
-          <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存设置")}</Button>
-          </Toolbar>
         </CardContent>
       </Panel>
-    </>
+        </div>
+      </div>
+      <div className="deck-save-bar settings-save-bar">
+        <div>
+          <span className={settingsDirty ? "" : "ready"} aria-hidden="true" />
+          <div><strong>{settingsDirty ? t("存在未保存更改") : t("设置已同步")}</strong><small>{activeSettingsSection.label}</small></div>
+        </div>
+        <Button disabled={!settingsDirty && Boolean(settings)} onClick={() => void actions.saveSettings()}><Save className="h-4 w-4" />{t("保存设置")}</Button>
+      </div>
+    </div>
   );
 }
 
@@ -3876,12 +4554,18 @@ function DiagnosticsPanel({ diagnostics, actions }: { diagnostics: DiagnosticsRe
 
 function RelayProfileList({
   form,
+  profiles,
+  view,
+  reorderEnabled,
   onFormChange,
   onEdit,
   disabled = false,
   actions,
 }: {
   form: BackendSettings;
+  profiles: RelayProfile[];
+  view: RelayListView;
+  reorderEnabled: boolean;
   onFormChange: (value: BackendSettings) => void;
   onEdit: (id: string) => void;
   disabled?: boolean;
@@ -3896,6 +4580,7 @@ function RelayProfileList({
     }),
   );
   const handleDragEnd = (event: DragEndEvent) => {
+    if (!reorderEnabled) return;
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const next = reorderRelayProfiles(form, String(active.id), String(over.id));
@@ -3903,20 +4588,22 @@ function RelayProfileList({
   };
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={form.relayProfiles.map((profile) => profile.id)} strategy={verticalListSortingStrategy}>
-        <div className="relay-profile-list">
-          {form.relayProfiles.map((profile, index) => (
+      <SortableContext items={profiles.map((profile) => profile.id)} strategy={view === "grid" ? rectSortingStrategy : verticalListSortingStrategy}>
+        <div className={`relay-profile-list ${view}-view`}>
+          {profiles.map((profile) => (
             <SortableRelayProfileCard
               actions={actions}
               form={form}
-              index={index}
               key={profile.id}
               onEdit={onEdit}
               onFormChange={onFormChange}
               disabled={disabled}
               profile={profile}
+              reorderEnabled={reorderEnabled}
+              view={view}
             />
           ))}
+          {!profiles.length ? <div className="relay-profile-empty">{t("没有匹配的供应商")}</div> : null}
         </div>
       </SortableContext>
     </DndContext>
@@ -3926,7 +4613,8 @@ function RelayProfileList({
 function SortableRelayProfileCard({
   form,
   profile,
-  index,
+  view,
+  reorderEnabled,
   onFormChange,
   onEdit,
   disabled = false,
@@ -3934,13 +4622,17 @@ function SortableRelayProfileCard({
 }: {
   form: BackendSettings;
   profile: RelayProfile;
-  index: number;
+  view: RelayListView;
+  reorderEnabled: boolean;
   onFormChange: (value: BackendSettings) => void;
   onEdit: (id: string) => void;
   disabled?: boolean;
   actions: Actions;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: profile.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: profile.id,
+    disabled: !reorderEnabled,
+  });
   const active = profile.id === form.activeRelayId;
   const latencyTarget = relayProfileLatencyTarget(profile);
   const [latency, setLatency] = useState<{ status: "idle" | "loading" | "ok" | "failed"; latencyMs: number | null }>({
@@ -3987,11 +4679,157 @@ function SortableRelayProfileCard({
     };
   }, [latencyTarget]);
 
+  const aggregateProfile = isAggregateRelayProfile(profile);
+  const aggregateCandidates = aggregateProfile ? aggregateMemberCandidates(form, profile.id) : [];
+  const aggregateConfig = aggregateProfile ? normalizeAggregateConfig(profile.aggregate, aggregateCandidates) : null;
+  const memberCount = aggregateConfig?.members.length ?? 0;
+  const candidateCount = aggregateCandidates.length;
+  const memberCoverage = candidateCount ? Math.round((memberCount / candidateCount) * 100) : memberCount ? 100 : 0;
+  const modelCount = relayProfileModelCount(profile);
+  const baseUrl = profile.protocol === "chatCompletions"
+    ? profile.upstreamBaseUrl || profile.baseUrl
+    : profile.baseUrl || profile.upstreamBaseUrl;
+  const latencyLabel = latency.status === "loading"
+    ? "..."
+    : latency.status === "ok" && latency.latencyMs !== null
+      ? tf("{0} ms", [latency.latencyMs])
+      : latency.status === "failed"
+        ? t("不可用")
+        : "--";
+  const latencyTone = latency.status === "failed"
+    ? "bad"
+    : latency.status === "ok" && latency.latencyMs !== null
+      ? latency.latencyMs <= 450 ? "good" : latency.latencyMs <= 900 ? "warn" : "bad"
+      : "muted";
+  const latencyMeter = relayLatencyHealthPercent(latency.status, latency.latencyMs);
+  const actionButtons = (
+    <>
+      <Button
+        aria-label={disabled ? t("供应商切换不可用") : active ? t("当前正在使用") : t("设为当前")}
+        className={`relay-use-button ${active ? "active" : ""}`}
+        disabled={disabled}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (disabled) return;
+          const previousActiveRelayId = form.activeRelayId;
+          const next = syncLegacyRelayFields({ ...form, activeRelayId: profile.id });
+          void actions.switchRelayProfile(next, previousActiveRelayId);
+        }}
+        size={view === "grid" ? "icon" : "sm"}
+        title={disabled ? t("供应商切换不可用") : active ? t("当前正在使用") : t("设为当前")}
+        variant={active ? "secondary" : "outline"}
+      >
+        {active ? <CheckCircle2 className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+        {view === "list" ? active ? t("使用中") : t("使用") : null}
+      </Button>
+      <span className="relay-card-extra">
+        <Button
+          aria-label={aggregateProfile ? t("聚合供应商会在真实对话中轮转成员，请测试成员供应商") : t("发送 hi 测试")}
+          disabled={aggregateProfile}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (aggregateProfile) return;
+            void actions.testRelayProfile(profile);
+          }}
+          size="icon"
+          title={aggregateProfile ? t("聚合供应商会在真实对话中轮转成员，请测试成员供应商") : t("发送 hi 测试")}
+          variant="ghost"
+        >
+          <TestTube className="h-4 w-4" />
+        </Button>
+        <Button
+          aria-label={t("编辑")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit(profile.id);
+          }}
+          size="icon"
+          title={t("编辑")}
+          variant="ghost"
+        >
+          <Edit3 className="h-4 w-4" />
+        </Button>
+        <Button
+          aria-label={t("复制")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onFormChange(duplicateRelayProfile(form, profile.id));
+          }}
+          size="icon"
+          title={t("复制")}
+          variant="ghost"
+        >
+          <Copy className="h-4 w-4" />
+        </Button>
+        <Button
+          aria-label={t("删除供应商")}
+          disabled={form.relayProfiles.length <= 1}
+          onClick={(event) => {
+            event.stopPropagation();
+            onFormChange(removeRelayProfile(form, profile.id));
+          }}
+          size="icon"
+          title={t("删除供应商")}
+          variant="ghost"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </span>
+    </>
+  );
+
+  if (view === "list") {
+    return (
+      <div
+        className={`relay-profile-card list-view ${active ? "active" : ""} ${isDragging ? "dragging" : ""}`}
+        data-relay-profile-id={profile.id}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") onEdit(profile.id);
+        }}
+        ref={setNodeRef}
+        style={style}
+        tabIndex={0}
+      >
+        <button
+          aria-label={t("拖动排序")}
+          className="relay-drag"
+          disabled={!reorderEnabled}
+          title={t("拖动排序")}
+          type="button"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <span className="relay-index" title={profile.name || t("未命名供应商")}>
+          {providerInitial(profile.name)}
+        </span>
+        <span className="relay-summary">
+          <strong>{profile.name || t("未命名供应商")}</strong>
+          <small>{relayModeLabel(profile.relayMode)} · {relayProtocolLabel(profile.protocol)} · {relayProfileConfigBrief(profile)}</small>
+        </span>
+        <button
+          className={`relay-latency ${latency.status}`}
+          disabled={!latencyTarget || latency.status === "loading"}
+          onClick={(event) => {
+            event.stopPropagation();
+            void refreshLatency();
+          }}
+          title={latencyTarget ? t("重新检测延迟") : t("此供应商没有单一目标 URL")}
+          type="button"
+        >
+          <Gauge className="h-4 w-4" />
+          <span>{latencyLabel}</span>
+        </button>
+        <span className="relay-card-actions">{actionButtons}</span>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`relay-profile-card ${active ? "active" : ""} ${isDragging ? "dragging" : ""}`}
+      className={`relay-profile-card grid-view ${active ? "active" : ""} ${isDragging ? "dragging" : ""}`}
       data-relay-profile-id={profile.id}
-      key={profile.id}
       onKeyDown={(event) => {
         if (event.key === "Enter") onEdit(profile.id);
       }}
@@ -3999,112 +4837,110 @@ function SortableRelayProfileCard({
       style={style}
       tabIndex={0}
     >
-      <button
-        aria-label={t("拖动排序")}
-        className="relay-drag"
-        title={t("拖动排序")}
-        type="button"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <span className="relay-index" title={profile.name || t("未命名供应商")}>
-        {providerInitial(profile.name)}
-      </span>
-      <span className="relay-summary">
-        <strong>{profile.name || t("未命名供应商")}</strong>
-        <small>{relayModeLabel(profile.relayMode)} · {relayProtocolLabel(profile.protocol)} · {relayProfileConfigBrief(profile)}</small>
-      </span>
-      <button
-        className={`relay-latency ${latency.status}`}
-        disabled={!latencyTarget || latency.status === "loading"}
-        onClick={(event) => {
-          event.stopPropagation();
-          void refreshLatency();
-        }}
-        title={latencyTarget ? t("重新检测延迟") : t("此供应商没有单一目标 URL")}
-        type="button"
-      >
-        <Gauge className="h-4 w-4" />
-        <span>
-          {latency.status === "loading"
-            ? "..."
-            : latency.status === "ok" && latency.latencyMs !== null
-              ? tf("{0} ms", [latency.latencyMs])
-              : latency.status === "failed"
-                ? t("不可用")
-                : "--"}
-        </span>
-      </button>
-      <span className="relay-card-actions">
-        <Button
-          className={`relay-use-button ${active ? "active" : ""}`}
-          disabled={disabled}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (disabled) return;
-            const previousActiveRelayId = form.activeRelayId;
-            const next = syncLegacyRelayFields({ ...form, activeRelayId: profile.id });
-            void actions.switchRelayProfile(next, previousActiveRelayId);
-          }}
-          size="sm"
-          title={disabled ? t("供应商切换不可用") : active ? t("当前正在使用") : t("设为当前")}
-          variant={active ? "secondary" : "outline"}
+      <div className="relay-card-head">
+        <button
+          aria-label={t("拖动排序")}
+          className="relay-drag"
+          disabled={!reorderEnabled}
+          title={t("拖动排序")}
+          type="button"
+          {...attributes}
+          {...listeners}
         >
-          <CheckCircle2 className="h-4 w-4" />
-          {active ? t("使用中") : t("使用")}
-        </Button>
-        <span className="relay-card-extra">
-          <Button
-            disabled={isAggregateRelayProfile(profile)}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (isAggregateRelayProfile(profile)) return;
-              void actions.testRelayProfile(profile);
-            }}
-            size="icon"
-            title={isAggregateRelayProfile(profile) ? t("聚合供应商会在真实对话中轮转成员，请测试成员供应商") : t("发送 hi 测试")}
-            variant="ghost"
-          >
-            <TestTube className="h-4 w-4" />
-          </Button>
-          <Button
-            onClick={(event) => {
-              event.stopPropagation();
-              onEdit(profile.id);
-            }}
-            size="icon"
-            title={t("编辑")}
-            variant="ghost"
-          >
-            <Edit3 className="h-4 w-4" />
-          </Button>
-          <Button
-            onClick={(event) => {
-              event.stopPropagation();
-              onFormChange(duplicateRelayProfile(form, profile.id));
-            }}
-            size="icon"
-            title={t("复制")}
-            variant="ghost"
-          >
-            <Copy className="h-4 w-4" />
-          </Button>
-          <Button
-            disabled={form.relayProfiles.length <= 1}
-            onClick={(event) => {
-              event.stopPropagation();
-              onFormChange(removeRelayProfile(form, profile.id));
-            }}
-            size="icon"
-            title={t("删除供应商")}
-            variant="ghost"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <span className={`relay-index ${aggregateProfile ? "aggregate" : ""}`} title={profile.name || t("未命名供应商")}>
+          {providerInitial(profile.name)}
         </span>
-      </span>
+        <span className="relay-summary">
+          <strong>{profile.name || t("未命名供应商")}</strong>
+          <small>{aggregateProfile && aggregateConfig ? aggregateStrategyLabel(aggregateConfig.strategy) : relayProtocolLabel(profile.protocol)}</small>
+        </span>
+        <span className="relay-card-badges">
+          {active ? <span className="relay-card-badge current">{t("当前")}</span> : null}
+          <span className={`relay-card-badge ${aggregateProfile ? "aggregate" : "mode"}`}>
+            {aggregateProfile ? t("聚合") : relayModeLabel(profile.relayMode)}
+          </span>
+        </span>
+      </div>
+
+      <div className="relay-card-details">
+        {aggregateProfile && aggregateConfig ? (
+          <>
+            <div className="relay-card-detail">
+              <span><Workflow className="h-4 w-4" />{t("策略")}</span>
+              <strong>{aggregateStrategyLabel(aggregateConfig.strategy)}</strong>
+            </div>
+            <div className="relay-card-detail">
+              <span><Users className="h-4 w-4" />{t("成员供应商")}</span>
+              <strong>{tf("{0} 个成员", [memberCount])}</strong>
+            </div>
+            <div className="relay-card-detail">
+              <span><ShieldCheck className="h-4 w-4" />{t("成员配置")}</span>
+              <strong>{memberCount} / {candidateCount}</strong>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="relay-card-detail">
+              <span><Network className="h-4 w-4" />{t("协议")}</span>
+              <strong>{relayProtocolLabel(profile.protocol)}</strong>
+            </div>
+            <div className="relay-card-detail">
+              <span><Link2 className="h-4 w-4" />{t("Base URL")}</span>
+              <code title={baseUrl || t("未填写 URL")}>{baseUrl || t("未填写 URL")}</code>
+            </div>
+            <div className="relay-card-detail">
+              <span><Boxes className="h-4 w-4" />{t("模型配置")}</span>
+              <strong>{modelCount ? tf("{0} 个模型", [modelCount]) : t("未配置")}</strong>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="relay-card-health">
+        <div className="relay-card-health-head">
+          <span>{aggregateProfile ? t("成员配置") : t("连接延迟")}</span>
+          {aggregateProfile ? (
+            <strong className={memberCount ? "good" : "bad"}>{memberCount} / {candidateCount}</strong>
+          ) : (
+            <button
+              className={latencyTone}
+              disabled={!latencyTarget || latency.status === "loading"}
+              onClick={(event) => {
+                event.stopPropagation();
+                void refreshLatency();
+              }}
+              title={latencyTarget ? t("重新检测延迟") : t("此供应商没有单一目标 URL")}
+              type="button"
+            >
+              {latencyLabel}
+            </button>
+          )}
+        </div>
+        <div className="relay-card-meter" aria-hidden="true">
+          <span
+            className={aggregateProfile ? memberCount ? "good" : "bad" : latencyTone}
+            style={{ width: `${aggregateProfile ? memberCoverage : latencyMeter}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="relay-card-footer">
+        <span className="relay-card-check-time">
+          <Clock3 className="h-4 w-4" />
+          {aggregateProfile
+            ? tf("{0} 个成员", [memberCount])
+            : latency.status === "loading"
+              ? t("正在检测")
+              : latency.status === "failed"
+                ? t("检测失败")
+                : latency.status === "ok"
+                  ? t("刚刚检测")
+                  : t("未检测")}
+        </span>
+        <span className="relay-card-actions">{actionButtons}</span>
+      </div>
     </div>
   );
 }
@@ -4281,9 +5117,8 @@ function ContextScreen({
   actions: Actions;
 }) {
   return (
-    <Panel fill>
-      <CardHead title={t("Codex 工具与插件")} detail={t("独立管理 Codex 的 MCP、Skills、Plugins；切换任意供应商都会带上。")} />
-      <CardContent>
+    <Panel className="context-screen-panel" fill>
+      <CardContent className="context-screen-content">
         <RelayContextManager
           form={normalizeSettings(form)}
           liveEntries={liveEntries}
@@ -4829,109 +5664,329 @@ function RelayContextManager({
   const entries = contextEntriesWithLiveEntries(form, liveEntries);
   const [activeKind, setActiveKind] = useState<ContextKind>("mcp");
   const [editor, setEditor] = useState<{ kind: ContextKind; entry?: CodexContextEntry } | null>(null);
-  const visibleEntries = contextEntriesByKind(entries, activeKind);
+  const [contextSearch, setContextSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ContextStatusFilter>("all");
+  const [contextSort, setContextSort] = useState<ContextListSort>("config");
+  const [contextPage, setContextPage] = useState(1);
+  const [contextPageSize, setContextPageSize] = useState(10);
+  const [busyEntryKey, setBusyEntryKey] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const allKindEntries = contextEntriesByKind(entries, activeKind);
+  const searchQuery = contextSearch.trim().toLocaleLowerCase();
+  const filteredEntries = allKindEntries
+    .filter((entry) => {
+      if (statusFilter === "enabled" && !entry.enabled) return false;
+      if (statusFilter === "disabled" && entry.enabled) return false;
+      if (!searchQuery) return true;
+      return [entry.id, entry.title, entry.summary, entry.tomlBody, contextKindLabel(entry.kind)]
+        .some((value) => value.toLocaleLowerCase().includes(searchQuery));
+    })
+    .sort((left, right) => {
+      if (contextSort === "name") return (left.title || left.id).localeCompare(right.title || right.id);
+      if (contextSort === "enabled" && left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+      return allKindEntries.indexOf(left) - allKindEntries.indexOf(right);
+    });
+  const pageCount = Math.max(1, Math.ceil(filteredEntries.length / contextPageSize));
+  const currentPage = Math.min(contextPage, pageCount);
+  const pageStartIndex = (currentPage - 1) * contextPageSize;
+  const visibleEntries = filteredEntries.slice(pageStartIndex, pageStartIndex + contextPageSize);
+  const pageStart = filteredEntries.length ? pageStartIndex + 1 : 0;
+  const pageEnd = Math.min(pageStartIndex + contextPageSize, filteredEntries.length);
   const label = contextKindLabel(activeKind);
+  const activeOption = contextKindOptions.find((option) => option.kind === activeKind) ?? contextKindOptions[0];
+  const ActiveKindIcon = activeOption.icon;
+  const paginationItems = useMemo<Array<number | string>>(() => {
+    if (pageCount <= 5) return Array.from({ length: pageCount }, (_, index) => index + 1);
+    const pages = Array.from(new Set([1, pageCount, currentPage - 1, currentPage, currentPage + 1]))
+      .filter((page) => page >= 1 && page <= pageCount)
+      .sort((left, right) => left - right);
+    const result: Array<number | string> = [];
+    pages.forEach((page, index) => {
+      const previous = pages[index - 1];
+      if (previous && page - previous > 1) result.push(`ellipsis-${previous}`);
+      result.push(page);
+    });
+    return result;
+  }, [currentPage, pageCount]);
+
+  useEffect(() => {
+    if (contextPage > pageCount) setContextPage(pageCount);
+  }, [contextPage, pageCount]);
+
+  const syncContextSettings = async (next: BackendSettings) => {
+    const syncResult = await actions.syncLiveContextEntries(next, true);
+    if (syncResult && isSuccessStatus(syncResult.status)) {
+      await actions.refreshRelayFiles(true);
+    }
+    return !!syncResult && isSuccessStatus(syncResult.status);
+  };
 
   const saveEntry = async (kind: ContextKind, id: string, tomlBody: string) => {
     const next = await actions.upsertContextEntry(form, kind, id, tomlBody);
-    if (!next) return;
+    if (!next) return false;
     onFormChange(next);
+    await syncContextSettings(next);
     setEditor(null);
+    setActiveKind(kind);
+    setContextPage(1);
+    return true;
   };
 
   const toggleContextEntryEnabled = async (entry: CodexContextEntry) => {
-    const nextBody = setContextEntryEnabled(entry.tomlBody, !entry.enabled);
-    const next = await actions.upsertContextEntry(form, entry.kind, entry.id, nextBody);
-    if (!next) return;
-    onFormChange(next);
-    const syncResult = await actions.syncLiveContextEntries(next, true);
-    if (syncResult && isSuccessStatus(syncResult.status)) {
-      void actions.refreshRelayFiles();
+    const entryKey = `${entry.kind}-${entry.id}`;
+    if (busyEntryKey) return;
+    setBusyEntryKey(entryKey);
+    try {
+      const nextBody = setContextEntryEnabled(entry.tomlBody, !entry.enabled);
+      const next = await actions.upsertContextEntry(form, entry.kind, entry.id, nextBody);
+      if (!next) return;
+      onFormChange(next);
+      await syncContextSettings(next);
+    } finally {
+      setBusyEntryKey(null);
     }
   };
 
   const deleteEntry = async (entry: CodexContextEntry) => {
-    const next = await actions.deleteContextEntry(form, entry.kind, entry.id);
-    if (!next) return;
-    onFormChange(next);
+    const entryName = entry.title || entry.id;
+    if (!window.confirm(tf("删除工具“{0}”？此操作会从全局配置中移除该条目。", [entryName]))) return;
+    const entryKey = `${entry.kind}-${entry.id}`;
+    if (busyEntryKey) return;
+    setBusyEntryKey(entryKey);
+    try {
+      const next = await actions.deleteContextEntry(form, entry.kind, entry.id);
+      if (!next) return;
+      onFormChange(next);
+      await syncContextSettings(next);
+      if (editor?.entry?.id === entry.id && editor.kind === entry.kind) setEditor(null);
+    } finally {
+      setBusyEntryKey(null);
+    }
+  };
+
+  const refreshContextEntries = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await actions.refreshLiveContextEntries();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const changeActiveKind = (kind: ContextKind) => {
+    setActiveKind(kind);
+    setContextPage(1);
+    if (editor && editor.kind !== kind) setEditor(null);
   };
 
   return (
-    <div className="relay-context-panel">
-      <div className="relay-context-head">
+    <div className="context-manager">
+      <div className="context-manager-head">
         <div>
           <strong>{t("Codex 工具与插件")}</strong>
           <span>{t("MCP、Skills、Plugins 作为全局配置独立管理，切换任意供应商都会合并。")}</span>
         </div>
-        <div className="relay-context-head-actions">
-          <Button onClick={() => setEditor({ kind: activeKind })} size="sm" variant="secondary">
+        <div className="context-manager-head-actions">
+          <Button
+            aria-label={t("刷新工具与插件")}
+            disabled={refreshing}
+            onClick={() => void refreshContextEntries()}
+            size="icon"
+            title={t("刷新工具与插件")}
+            variant="outline"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "context-refreshing" : ""}`} />
+          </Button>
+          <Button onClick={() => setEditor({ kind: activeKind })} size="sm">
             <Plus className="h-4 w-4" />
-            {t("新增")}{label}
+            {t("新增工具")}
           </Button>
         </div>
       </div>
-      <div className="segmented">
-        {contextKindOptions.map((option) => (
+      <div aria-label={t("工具类型")} className="context-kind-tabs" role="tablist">
+        {contextKindOptions.map((option) => {
+          const kindEntries = contextEntriesByKind(entries, option.kind);
+          const enabledCount = kindEntries.filter((entry) => entry.enabled).length;
+          const KindIcon = option.icon;
+          return (
           <button
-            className={activeKind === option.kind ? "active" : ""}
+            aria-selected={activeKind === option.kind}
+            className={`context-kind-tab ${activeKind === option.kind ? "active" : ""}`}
             key={option.kind}
-            onClick={() => setActiveKind(option.kind)}
+            onClick={() => changeActiveKind(option.kind)}
+            role="tab"
             type="button"
           >
-            <span>{option.label}</span>
-            <small>{contextEntriesByKind(entries, option.kind).length}</small>
+            <span className="context-kind-tab-copy">
+              <span className="context-kind-icon"><KindIcon className="h-4 w-4" /></span>
+              <span><strong>{option.label}</strong><small>{option.detail}</small></span>
+            </span>
+            <span className="context-kind-count">
+              <strong>{kindEntries.length}</strong>
+              <small>{tf("已启用 {0}", [enabledCount])}</small>
+            </span>
           </button>
-        ))}
+          );
+        })}
       </div>
-      <div className="relay-context-summary">
-        {t("当前共有")} {visibleEntries.length} {t("个")}{label}{t("；这些条目独立于供应商保存，会写入所有供应商切换后的 config.toml。")}
+      <div className="context-toolbar">
+        <label className="context-search-field">
+          <Search aria-hidden="true" className="h-4 w-4" />
+          <Input
+            aria-label={t("搜索工具")}
+            onChange={(event) => {
+              setContextSearch(event.currentTarget.value);
+              setContextPage(1);
+            }}
+            placeholder={t("搜索名称、说明或配置内容...")}
+            type="search"
+            value={contextSearch}
+          />
+        </label>
+        <label className="context-toolbar-select-wrap">
+          <Filter aria-hidden="true" className="h-4 w-4" />
+          <select
+            aria-label={t("工具状态筛选")}
+            className="context-toolbar-select"
+            onChange={(event) => {
+              setStatusFilter(event.currentTarget.value as ContextStatusFilter);
+              setContextPage(1);
+            }}
+            value={statusFilter}
+          >
+            <option value="all">{t("全部状态")}</option>
+            <option value="enabled">{t("已启用")}</option>
+            <option value="disabled">{t("已禁用")}</option>
+          </select>
+        </label>
+        <label className="context-toolbar-select-wrap">
+          <ArrowDownWideNarrow aria-hidden="true" className="h-4 w-4" />
+          <select
+            aria-label={t("排序方式")}
+            className="context-toolbar-select"
+            onChange={(event) => {
+              setContextSort(event.currentTarget.value as ContextListSort);
+              setContextPage(1);
+            }}
+            value={contextSort}
+          >
+            <option value="config">{t("配置顺序")}</option>
+            <option value="name">{t("按名称")}</option>
+            <option value="enabled">{t("启用优先")}</option>
+          </select>
+        </label>
+        <span className="context-toolbar-count">{tf("共 {0} 个工具", [filteredEntries.length])}</span>
       </div>
-      <div className="relay-context-list">
-        {visibleEntries.length ? (
-          visibleEntries.map((entry) => (
-            <div className="relay-context-row" key={`${entry.kind}-${entry.id}`}>
-              <strong className="context-title">{entry.title || entry.id}</strong>
-              <div className="relay-context-actions">
-                <button
-                  aria-checked={entry.enabled}
-                  aria-label={`contextEnabledSwitch-${entry.kind}-${entry.id}`}
-                  className={`context-enabled-switch ${entry.enabled ? "active" : ""}`}
-                  onClick={() => void toggleContextEntryEnabled(entry)}
-                  role="switch"
-                  title={entry.enabled ? t("禁用此扩展项") : t("启用此扩展项")}
-                  type="button"
-                >
-                  <span className="context-switch-track" aria-hidden="true">
-                    <span className="context-switch-thumb" />
-                  </span>
-                </button>
-                <Button onClick={() => setEditor({ kind: entry.kind, entry })} size="icon" title={t("编辑扩展项")} variant="ghost">
-                  <Edit3 className="h-4 w-4" />
-                </Button>
-                <Button
-                  className="relay-context-delete"
-                  onClick={() => void deleteEntry(entry)}
-                  size="icon"
-                  title={t("删除扩展项")}
-                  variant="ghost"
-                >
-                  <Trash2 className="h-4 w-4" />
+      <div className={`context-workspace ${editor ? "with-editor" : ""}`}>
+        <div className="context-table-panel">
+          <div className="context-table-header" role="row">
+            <span>{t("工具名称")}</span>
+            <span>{t("类型")}</span>
+            <span>{t("状态")}</span>
+            <span>{t("操作")}</span>
+          </div>
+          <div className="context-table-body">
+            {visibleEntries.length ? visibleEntries.map((entry) => {
+              const entryOption = contextKindOptions.find((option) => option.kind === entry.kind) ?? activeOption;
+              const EntryIcon = entryOption.icon;
+              const entryKey = `${entry.kind}-${entry.id}`;
+              const entryBusy = busyEntryKey === entryKey;
+              return (
+                <div className="context-table-row" key={entryKey}>
+                  <div className="context-entry-main">
+                    <span className="context-entry-icon" data-kind={entry.kind}><EntryIcon className="h-4 w-4" /></span>
+                    <span className="context-entry-copy">
+                      <strong title={entry.title || entry.id}>{entry.title || entry.id}</strong>
+                      <small title={entry.summary || entry.tomlBody}>{entry.summary || t("暂无描述。")}</small>
+                    </span>
+                  </div>
+                  <span className="context-entry-type" data-kind={entry.kind}>{entryOption.label}</span>
+                  <div className="context-entry-status">
+                    <button
+                      aria-checked={entry.enabled}
+                      aria-label={`contextEnabledSwitch-${entry.kind}-${entry.id}`}
+                      className={`context-enabled-switch ${entry.enabled ? "active" : ""}`}
+                      disabled={entryBusy}
+                      onClick={() => void toggleContextEntryEnabled(entry)}
+                      role="switch"
+                      title={entry.enabled ? t("禁用此扩展项") : t("启用此扩展项")}
+                      type="button"
+                    >
+                      <span className="context-switch-track" aria-hidden="true"><span className="context-switch-thumb" /></span>
+                    </button>
+                    <small>{entry.enabled ? t("已启用") : t("已禁用")}</small>
+                  </div>
+                  <div className="context-entry-actions">
+                    <Button disabled={entryBusy} onClick={() => setEditor({ kind: entry.kind, entry })} size="icon" title={t("编辑扩展项")} variant="ghost">
+                      <Edit3 className="h-4 w-4" />
+                    </Button>
+                    <Button className="context-entry-delete" disabled={entryBusy} onClick={() => void deleteEntry(entry)} size="icon" title={t("删除扩展项")} variant="ghost">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div className="context-empty-state">
+                <span className="context-entry-icon" data-kind={activeKind}><ActiveKindIcon className="h-5 w-5" /></span>
+                <strong>{searchQuery || statusFilter !== "all" ? t("没有匹配的工具") : `${t("暂无")}${label}`}</strong>
+                <span>{searchQuery || statusFilter !== "all" ? t("请调整搜索词或筛选条件。") : `${t("可以从通用配置文件或这里新增。")}`}</span>
+                <Button onClick={() => setEditor({ kind: activeKind })} size="sm" variant="outline">
+                  <Plus className="h-4 w-4" />
+                  {t("新增")}{label}
                 </Button>
               </div>
+            )}
+          </div>
+          <div className="context-pagination">
+            <div className="context-pagination-summary">
+              <span>{tf("第 {0}-{1} 条，共 {2} 条", [pageStart, pageEnd, filteredEntries.length])}</span>
+              <label>
+                <span>{t("每页")}</span>
+                <select
+                  aria-label={t("每页条数")}
+                  onChange={(event) => {
+                    setContextPageSize(Number(event.currentTarget.value));
+                    setContextPage(1);
+                  }}
+                  value={contextPageSize}
+                >
+                  {[10, 20, 50].map((size) => <option key={size} value={size}>{size} {t("条/页")}</option>)}
+                </select>
+              </label>
             </div>
-          ))
-        ) : (
-          <div className="empty">{t("暂无")}{label}{t("，可以从通用配置文件或这里新增。")}</div>
-        )}
+            <nav aria-label={t("工具分页")} className="context-page-controls">
+              <Button aria-label={t("首页")} disabled={currentPage === 1} onClick={() => setContextPage(1)} size="icon" title={t("首页")} variant="ghost"><ChevronsLeft className="h-4 w-4" /></Button>
+              <Button aria-label={t("上一页")} disabled={currentPage === 1} onClick={() => setContextPage((page) => Math.max(1, page - 1))} size="icon" title={t("上一页")} variant="ghost"><ChevronLeft className="h-4 w-4" /></Button>
+              <div className="context-page-numbers">
+                {paginationItems.map((item) => typeof item === "number" ? (
+                  <Button aria-current={item === currentPage ? "page" : undefined} key={item} onClick={() => setContextPage(item)} size="icon" variant={item === currentPage ? "secondary" : "ghost"}>{item}</Button>
+                ) : <span aria-hidden="true" key={item}>…</span>)}
+              </div>
+              <span className="context-page-position">{tf("第 {0} / {1} 页", [currentPage, pageCount])}</span>
+              <Button aria-label={t("下一页")} disabled={currentPage === pageCount} onClick={() => setContextPage((page) => Math.min(pageCount, page + 1))} size="icon" title={t("下一页")} variant="ghost"><ChevronRight className="h-4 w-4" /></Button>
+              <Button aria-label={t("末页")} disabled={currentPage === pageCount} onClick={() => setContextPage(pageCount)} size="icon" title={t("末页")} variant="ghost"><ChevronsRight className="h-4 w-4" /></Button>
+            </nav>
+          </div>
+        </div>
+        {editor ? (
+          <ContextEntryEditor
+            entry={editor.entry}
+            key={`${editor.kind}-${editor.entry?.id ?? "new"}`}
+            kind={editor.kind}
+            onCancel={() => setEditor(null)}
+            onSave={saveEntry}
+          />
+        ) : null}
       </div>
-      {editor ? (
-        <ContextEntryEditor
-          entry={editor.entry}
-          kind={editor.kind}
-          onCancel={() => setEditor(null)}
-          onSave={(kind, id, tomlBody) => void saveEntry(kind, id, tomlBody)}
-        />
-      ) : null}
+      <div className={`context-sync-status ${liveEntries ? "ready" : "waiting"}`}>
+        <span aria-hidden="true" />
+        <div>
+          <strong>{liveEntries ? t("配置已同步到当前 Codex") : t("等待读取当前 Codex 配置")}</strong>
+          <small title={relayFiles?.configPath}>{relayFiles?.configPath || t("切换供应商时会自动写入 config.toml")}</small>
+        </div>
+      </div>
     </div>
   );
 }
@@ -4945,16 +6000,40 @@ function ContextEntryEditor({
   kind: ContextKind;
   entry?: CodexContextEntry;
   onCancel: () => void;
-  onSave: (kind: ContextKind, id: string, tomlBody: string) => void;
+  onSave: (kind: ContextKind, id: string, tomlBody: string) => Promise<boolean>;
 }) {
   const [draftKind, setDraftKind] = useState<ContextKind>(entry?.kind ?? kind);
   const [id, setId] = useState(entry?.id ?? "");
   const [tomlBody, setTomlBody] = useState(entry?.tomlBody ?? "");
+  const [saving, setSaving] = useState(false);
   const canSave = id.trim().length > 0;
+  const editorLabel = contextKindLabel(draftKind);
+  const editorOption = contextKindOptions.find((option) => option.kind === draftKind) ?? contextKindOptions[0];
+  const EditorIcon = editorOption.icon;
+
+  const submit = async () => {
+    if (!canSave || saving) return;
+    setSaving(true);
+    try {
+      await onSave(draftKind, id.trim(), tomlBody);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <div className="context-editor">
-      <div className="context-editor-fields">
+    <aside aria-labelledby="context-editor-title" className="context-editor" role="dialog">
+      <div className="context-editor-head">
+        <div>
+          <span className="context-entry-icon" data-kind={draftKind}><EditorIcon className="h-4 w-4" /></span>
+          <span>
+            <strong id="context-editor-title">{entry ? t("编辑") : t("新增")}{editorLabel}</strong>
+            <small>{t("保存后会同步到当前 Codex 配置")}</small>
+          </span>
+        </div>
+        <Button aria-label={t("关闭编辑器")} onClick={onCancel} size="icon" title={t("关闭编辑器")} variant="ghost"><X className="h-4 w-4" /></Button>
+      </div>
+      <div className="context-editor-body">
         <Field label={t("类型")}>
           <select
             className="field-select"
@@ -4975,8 +6054,7 @@ function ContextEntryEditor({
             placeholder={t("例如 context7")}
           />
         </Field>
-      </div>
-      <Field label={t("TOML 配置体")}>
+      <Field label={t("TOML 配置体")} className="context-editor-config-field">
         <Textarea
           className="context-editor-textarea"
           value={tomlBody}
@@ -4985,14 +6063,19 @@ function ContextEntryEditor({
           spellCheck={false}
         />
       </Field>
-      <Toolbar>
-        <Button disabled={!canSave} onClick={() => onSave(draftKind, id.trim(), tomlBody)} size="sm">
-          <Save className="h-4 w-4" />
-          {t("保存扩展项")}
-        </Button>
+      <div className="context-editor-preview">
+        <Info aria-hidden="true" className="h-4 w-4" />
+        <span><strong>{t("配置预览")}</strong><small>{t("启用后会在所有供应商切换后的 config.toml 中合并此工具。")}</small></span>
+      </div>
+      </div>
+      <div className="context-editor-actions">
         <Button onClick={onCancel} size="sm" variant="secondary">{t("取消")}</Button>
-      </Toolbar>
-    </div>
+        <Button disabled={!canSave || saving} onClick={() => void submit()} size="sm">
+          <Save className="h-4 w-4" />
+          {saving ? t("正在保存…") : t("保存扩展项")}
+        </Button>
+      </div>
+    </aside>
   );
 }
 
@@ -5657,10 +6740,10 @@ function routeSubtitle(route: Route) {
   return subtitles[route];
 }
 
-const contextKindOptions: Array<{ kind: ContextKind; label: string; tableName: string }> = [
-  { kind: "mcp", label: "MCP", tableName: "mcp_servers" },
-  { kind: "skill", label: "Skills", tableName: "skills" },
-  { kind: "plugin", label: t("插件"), tableName: "plugins" },
+const contextKindOptions: Array<{ kind: ContextKind; label: string; tableName: string; detail: string; icon: LucideIcon }> = [
+  { kind: "mcp", label: "MCP", tableName: "mcp_servers", detail: t("运行服务"), icon: Network },
+  { kind: "skill", label: "Skills", tableName: "skills", detail: t("工作流技能"), icon: Workflow },
+  { kind: "plugin", label: t("插件"), tableName: "plugins", detail: t("扩展能力"), icon: Boxes },
 ];
 
 function contextKindLabel(kind: ContextKind) {
@@ -6576,6 +7659,21 @@ function relayProfileConfigBrief(profile: RelayProfile): string {
   }
   if (profile.relayMode === "official") return profile.officialMixApiKey ? t("混入 API Key") : t("不写 API 文件");
   return profile.baseUrl || t("未填写 URL");
+}
+
+function relayProfileModelCount(profile: RelayProfile): number {
+  const models = profile.modelList
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  if (models.length) return models.length;
+  return profile.model.trim() ? 1 : 0;
+}
+
+function relayLatencyHealthPercent(status: "idle" | "loading" | "ok" | "failed", latencyMs: number | null): number {
+  if (status === "failed") return 12;
+  if (status !== "ok" || latencyMs === null) return 36;
+  return Math.max(18, Math.min(100, Math.round(100 - latencyMs / 15)));
 }
 
 function relayProfileLatencyTarget(profile: RelayProfile): string {
