@@ -314,6 +314,7 @@ fn relay_context_management_is_global_not_supplier_scoped() {
     assert!(
         app_tsx.contains("title={t(\"Codex 工具与插件\")}")
             || app_tsx.contains("title=\"Codex 工具与插件\"")
+            || app_tsx.contains("<strong>{t(\"Codex 工具与插件\")}</strong>")
     );
     assert!(!app_tsx.contains("label: \"上下文配置\""));
     assert!(!app_tsx.contains("title=\"上下文配置\""));
@@ -336,7 +337,9 @@ fn relay_context_management_is_global_not_supplier_scoped() {
     assert!(app_tsx.contains("contextEnabledSwitch"));
     assert!(!app_tsx.contains("entry.enabled ? \"已启用\" : \"已禁用\""));
     assert!(!app_tsx.contains("空配置体"));
-    assert!(app_tsx.contains("relay-context-delete"));
+    assert!(app_tsx.contains("const deleteEntry = async (entry: CodexContextEntry) =>"));
+    assert!(app_tsx.contains("onClick={() => void deleteEntry(entry)}"));
+    assert!(app_tsx.contains("context-entry-delete"));
     assert!(!app_tsx.contains("切换供应商时只合并勾选项"));
     assert!(!app_tsx.contains("未勾选的条目不会写入"));
     assert!(!app_tsx.contains("className=\"context-switch\""));
@@ -345,7 +348,7 @@ fn relay_context_management_is_global_not_supplier_scoped() {
     assert!(styles.contains(".context-switch-track"));
     assert!(styles.contains(".context-switch-thumb"));
     assert!(!styles.contains(".relay-context-row code"));
-    assert!(styles.contains(".relay-context-delete"));
+    assert!(styles.contains(".context-entry-delete"));
 }
 
 #[test]
