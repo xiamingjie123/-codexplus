@@ -221,6 +221,7 @@ jobs:
   latest-json:
     name: Upload static latest.json
     runs-on: ubuntu-latest
+    if: ${{ always() && needs.ensure-release.result == 'success' && needs.windows-installer.result == 'success' }}
     needs:
       - ensure-release
       - windows-installer
