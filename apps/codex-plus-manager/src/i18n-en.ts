@@ -975,6 +975,7 @@ export const EN_BACKEND: Record<string, string> = {
   "官方远端插件缓存已可用，无需修复。": "Official remote plugin cache is available; no repair needed.",
   "发现可用更新。": "Update available.",
   "当前已是最新版本。": "Already on the latest version.",
+  "没有找到当前平台可下载的 Release asset。": "No downloadable Release asset was found for the current platform.",
   "请先检查更新并选择可下载的 Release asset。": "Check for updates first and select a downloadable release asset.",
   "安装包已下载并启动，请按安装向导完成更新。": "Installer downloaded and launched. Follow the setup wizard to finish updating.",
   "日志已读取。": "Logs loaded.",

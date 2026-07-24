@@ -1630,7 +1630,7 @@ export function App() {
     }
   };
 
-  const checkUpdate = async (silent = false) => {
+  const checkUpdate = async (silent = false): Promise<UpdateResult | null> => {
     const result = await run(() => call<UpdateResult>("check_update"));
     if (result) {
       setUpdate(result);
@@ -1638,25 +1638,70 @@ export function App() {
         showNotice(t("GitHub Release 检查"), result.message, result.status);
       }
     }
+    return result;
   };
 
   const performUpdate = async () => {
     if (updateInstallProgress.active) return;
-    const release =
-      update?.latestVersion && update.assetName && update.assetUrl
+
+    let checkedUpdate = update;
+    let release =
+      checkedUpdate?.updateAvailable &&
+      isSuccessStatus(checkedUpdate.status) &&
+      checkedUpdate.latestVersion &&
+      checkedUpdate.assetName &&
+      checkedUpdate.assetUrl
         ? {
-            version: update.latestVersion,
+            version: checkedUpdate.latestVersion,
             url: "",
-            body: update.releaseSummary ?? "",
-            asset_name: update.assetName,
-            asset_url: update.assetUrl,
+            body: checkedUpdate.releaseSummary ?? "",
+            asset_name: checkedUpdate.assetName,
+            asset_url: checkedUpdate.assetUrl,
           }
         : null;
+
     setUpdateInstallProgress({
       active: true,
       percent: 8,
-      message: t("正在准备安装包下载…"),
+      message: release ? t("正在准备安装包下载…") : t("正在获取 GitHub Release 信息…"),
     });
+
+    if (!release) {
+      checkedUpdate = await checkUpdate(false);
+      if (
+        !checkedUpdate ||
+        (!isSuccessStatus(checkedUpdate.status) && checkedUpdate.status !== "not_checked")
+      ) {
+        setUpdateInstallProgress({
+          active: false,
+          percent: 100,
+          message: checkedUpdate?.message ?? t("安装包更新失败，请查看错误提示后重试。"),
+        });
+        return;
+      }
+      if (!checkedUpdate.updateAvailable) {
+        setUpdateInstallProgress({
+          active: false,
+          percent: 100,
+          message: checkedUpdate.message,
+        });
+        return;
+      }
+      if (!checkedUpdate.latestVersion || !checkedUpdate.assetName || !checkedUpdate.assetUrl) {
+        const message = t("没有找到当前平台可下载的 Release asset。");
+        setUpdateInstallProgress({ active: false, percent: 100, message });
+        showNotice(t("更新安装"), message, "failed");
+        return;
+      }
+      release = {
+        version: checkedUpdate.latestVersion,
+        url: "",
+        body: checkedUpdate.releaseSummary ?? "",
+        asset_name: checkedUpdate.assetName,
+        asset_url: checkedUpdate.assetUrl,
+      };
+    }
+
     const progressTimer = window.setInterval(() => {
       setUpdateInstallProgress((current) => {
         if (!current.active) return current;
@@ -2599,7 +2644,7 @@ type Actions = {
   installEntrypoints: () => Promise<void>;
   uninstallEntrypoints: () => Promise<void>;
   repairShortcuts: () => Promise<void>;
-  checkUpdate: () => Promise<void>;
+  checkUpdate: () => Promise<UpdateResult | null>;
   performUpdate: () => Promise<void>;
   saveSettings: () => Promise<void>;
   saveSettingsValue: (settings: BackendSettings, silent?: boolean) => Promise<void>;
